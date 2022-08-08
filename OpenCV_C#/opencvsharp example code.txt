@@ -1,0 +1,3794 @@
+#1、 Face detection   cascade classifier 
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Human face detection
+    /// http://docs.opencv.org/doc/tutorials/objdetect/cascade_classifier/cascade_classifier.html
+    /// </summary>
+    class FaceDetection : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            //  Load cascade classifiers 
+            using var haarCascade = new CascadeClassifier(TextPath.HaarCascade);
+            using var lbpCascade = new CascadeClassifier(TextPath.LbpCascade);
+
+
+            //  Face detection 
+            Mat haarResult = DetectFace(haarCascade);
+            Mat lbpResult = DetectFace(lbpCascade);
+
+
+            Cv2.ImShow("Faces by Haar", haarResult);
+            Cv2.ImShow("Faces by LBP", lbpResult);
+            Cv2.WaitKey(0);
+            Cv2.DestroyAllWindows();
+        }
+
+
+    // Face detection 
+        private Mat DetectFace(CascadeClassifier cascade)
+        {
+            Mat result;
+
+
+            using (var src = new Mat(ImagePath.Yalta, ImreadModes.Color))
+            using (var gray = new Mat())
+            {
+                result = src.Clone();
+                Cv2.CvtColor(src, gray, ColorConversionCodes.BGR2GRAY);
+
+
+                //  Multiscale detection 
+                Rect[] faces = cascade.DetectMultiScale(
+                    gray, 1.08, 2, HaarDetectionTypes.ScaleImage, new Size(30, 30));
+
+
+                //  Draw all detected faces 
+                foreach (Rect face in faces)
+                {
+                    var center = new Point
+                    {
+                        X = (int)(face.X + face.Width * 0.5),
+                        Y = (int)(face.Y + face.Height * 0.5)
+                    };
+                    var axes = new Size
+                    {
+                        Width = (int)(face.Width * 0.5),
+                        Height = (int)(face.Height * 0.5)
+                    };
+                    Cv2.Ellipse(result, center, axes, 0, 0, 360, new Scalar(255, 0, 255), 4);
+                }
+            }
+            return result;
+        }
+    }
+}
+
+
+
+
+#2、 Face detection DNN    caffemodel
+using System;
+using OpenCvSharp;
+using OpenCvSharp.Dnn;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// To run this example first download the face model available here: https://github.com/spmallick/learnopencv/tree/master/FaceDetectionComparison/models
+    /// Add the files to the bin folder.
+    /// You should also prepare the input images (faces.jpg) yourself.
+    /// </summary>
+    internal class FaceDetectionDNN : ConsoleTestBase
+    {
+        const string configFile = "deploy.prototxt"; // The configuration file 
+        const string faceModel = "res10_300x300_ssd_iter_140000_fp16.caffemodel";  // A network model 
+        const string image = "faces.jpg";// Pictures to be tested 
+
+
+        public override void RunTest()
+        {
+            // Read sample pictures image
+            using var frame = Cv2.ImRead(image);
+            int frameHeight = frame.Rows;
+            int frameWidth = frame.Cols;
+            using var faceNet = CvDnn.ReadNetFromCaffe(configFile, faceModel);// Read the network model 
+      //Mat BlobFromImage(Mat image, double scaleFactor = 1, Size size = default, Scalar mean = default, bool swapRB = true, bool crop = true);
+      //image: The input image （1、3 perhaps 4 passageway ）
+      //scalefactor: The scaling of the values of each channel of the image 
+      //size: The spatial size of the output image , Such as size=(200,300) High h=300, wide w=200
+      //mean: The value used to subtract from each channel , To reduce the effect of light (e.g. image by bgr3 Image of the channel ,mean=[104.0, 177.0, 123.0], Express b The value of the channel -104,g-177,r-123)
+      //swapRB: In exchange for RB passageway , The default is False.(cv2.imread Read the color map is bgr passageway )
+      //crop: Image cropping , The default is False. The duty of True when , Scale first , Then cut from the center into size Size 
+      //ddepth: The depth of the output image , Optional CV_32F  perhaps  CV_8U.
+            using var blob = CvDnn.BlobFromImage(frame, 1.0, new Size(300, 300), new Scalar(104, 117, 123), false, false);
+            faceNet.SetInput(blob, "data");// Set up network input 
+
+
+            using var detection = faceNet.Forward("detection_out");// return Mat   blob  Used to specify the first output of the layer . The name of the layer to be output detection_out
+            using var detectionMat = new Mat(detection.Size(2), detection.Size(3), MatType.CV_32F,
+                detection.Ptr(0));// Detection matrix 
+            for (int i = 0; i < detectionMat.Rows; i++)// Traverse the detection matrix Mat Every line of 
+            {
+                float confidence = detectionMat.At<float>(i, 2);// The third column in each row is the confidence rate 
+
+
+                if (confidence > 0.7)
+                {   // Detection matrix   The first 4-7 As a  xmin  ymin  xmax ymax
+                    int x1 = (int) (detectionMat.At<float>(i, 3) * frameWidth);
+                    int y1 = (int) (detectionMat.At<float>(i, 4) * frameHeight);
+                    int x2 = (int) (detectionMat.At<float>(i, 5) * frameWidth);
+                    int y2 = (int) (detectionMat.At<float>(i, 6) * frameHeight);
+          // Draw a rectangle   green 
+                    Cv2.Rectangle(frame, new Point(x1, y1), new Point(x2, y2), new Scalar(0, 255, 0), 2, LineTypes.Link4);
+                }
+            }
+      // Display images 
+            Window.ShowImages(frame);
+        }
+    }
+}
+
+
+
+
+#3. cv::FAST  Use  FAST  The algorithm detects corners 
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// cv::FAST   Use  FAST  The algorithm detects corners 
+    /// </summary>
+    class FASTSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using Mat imgSrc = new Mat(ImagePath.Lenna, ImreadModes.Color);
+            using Mat imgGray = new Mat();
+            using Mat imgDst = imgSrc.Clone();
+            Cv2.CvtColor(imgSrc, imgGray, ColorConversionCodes.BGR2GRAY, 0);
+      //imgGray  Key detected （ horn ） Grayscale image of 
+      //50   The threshold value of the difference between the intensity of the central pixel and the pixels of the circle surrounding the pixel .
+      //true    If it is true , Then for the detected corner （ Key points ） Apply non maximum inhibition .
+            KeyPoint[] keypoints = Cv2.FAST(imgGray, 50, true); 
+
+
+            foreach (KeyPoint kp in keypoints)// Traverse the key points detected on the image .
+            {
+                imgDst.Circle((Point)kp.Pt, 3, Scalar.Red, -1, LineTypes.AntiAlias, 0);// Draw the dot 
+            }
+
+
+            Cv2.ImShow("FAST", imgDst);
+            Cv2.WaitKey(0);
+            Cv2.DestroyAllWindows();
+        }
+    }
+}
+
+
+#4. cv::flann   FLANN Is a fast nearest neighbor search package （Fast_Library_for_Approximate_Nearest_Neighbors）
+// A collection of nearest neighbor search algorithms for large data sets and high-dimensional features , And these algorithms have been optimized . In the face of large data sets, its effect is better than BFMatcher.
+// Use FLANN matching , We need to pass in two dictionaries as parameters . These two are used to determine the algorithm to be used and other related parameters .
+using System;
+using OpenCvSharp;
+using OpenCvSharp.Flann;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// cv::flann
+    /// </summary>
+    class FlannSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            Console.WriteLine("===== FlannTest =====");
+
+
+            //  Create a dataset 
+            using (var features = new Mat(10000, 2, MatType.CV_32FC1)) //10000 A little bit 
+            {
+                var rand = new Random();// Random number generator 
+                for (int i = 0; i < features.Rows; i++)
+                {
+                    features.Set<float>(i, 0, rand.Next(10000));// Random generation x coordinate 
+                    features.Set<float>(i, 1, rand.Next(10000));// Random generation y coordinate 
+                }
+
+
+                //  Query point  Mat Format 
+                var queryPoint = new Point2f(7777, 7777);// To be searched 
+                var queries = new Mat(1, 2, MatType.CV_32FC1);//Mat Format  
+                queries.Set<float>(0, 0, queryPoint.X);// Set up Mat The elements of 
+                queries.Set<float>(0, 1, queryPoint.Y);
+                Console.WriteLine("query:({0}, {1})", queryPoint.X, queryPoint.Y);
+                Console.WriteLine("-----");
+
+
+                //K Neighborhood search  knnSearch
+        // features – CV _ 32F  Type of matrix , Contains the features to index （ spot ）. The size of the matrix is   num_features x feature_dimensionality..
+                using var nnIndex = new OpenCvSharp.Flann.Index(features, new KDTreeIndexParams(4));// Construct the nearest neighbor search index for a given dataset .
+                const int Knn = 1; // Nearest neighbor number 
+                // queries   Query point , Each row of a 
+                //indices   Index of the nearest neighbor found 
+                //dists  The distance to the nearest neighbor 
+                //Knn   Number of nearest neighbors to search 
+                //SearchParams(int checks = 32, float eps = 0, bool sorted = true);  Search parameters 
+                nnIndex.KnnSearch(queries, out int[] indices, out float[] dists, Knn, new SearchParams(32));
+
+
+                for (int i = 0; i < Knn; i++)// Traverse the nearest neighbor 
+                {
+                    int index = indices[i];// Indexes 
+                    float dist = dists[i];// distance 
+                    var pt = new Point2f(features.Get<float>(index, 0), features.Get<float>(index, 1));// Nearest neighbor 
+                    Console.Write("No.{0}\t", i);
+                    Console.Write("index:{0}", index);
+                    Console.Write(" distance:{0}", dist);
+                    Console.Write(" data:({0}, {1})", pt.X, pt.Y);
+                    Console.WriteLine();
+                }
+            }
+            Console.Read();
+        }
+    }
+}
+
+
+#5.FREAK    Use  FREAK  Algorithm to retrieve key points .
+using OpenCvSharp;
+using OpenCvSharp.XFeatures2D;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    ///  Use  FREAK  Algorithmic retrieval Retrieves Key points .
+    /// </summary>
+    class FREAKSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var gray = new Mat(ImagePath.Lenna, ImreadModes.Grayscale); // grayscale 
+            using var dst = new Mat(ImagePath.Lenna, ImreadModes.Color); // Result chart 
+
+
+            // ORB  Key point detection 
+            using var orb = ORB.Create(1000);
+            KeyPoint[] keypoints = orb.Detect(gray);// Grayscale detection ORB Key points , As freak Initial key 
+
+
+            // FREAK
+            using var freak = FREAK.Create();
+            Mat freakDescriptors = new Mat(); //FREAK  Narrator 
+            freak.Compute(gray, ref keypoints, freakDescriptors);// Calculation FREAK Key points and descriptors 
+
+
+            if (keypoints != null)
+            {
+                var color = new Scalar(0, 255, 0);// green 
+                foreach (KeyPoint kpt in keypoints)// Traverse keys 
+                {
+                    float r = kpt.Size / 2;
+                    Cv2.Circle(dst, (Point)kpt.Pt, (int)r, color);// Draw key points 
+          // Draw a cross 
+                    Cv2.Line(dst,
+                        (Point)new Point2f(kpt.Pt.X + r, kpt.Pt.Y + r),
+                        (Point)new Point2f(kpt.Pt.X - r, kpt.Pt.Y - r), 
+                        color);
+                    Cv2.Line(dst,
+                        (Point)new Point2f(kpt.Pt.X - r, kpt.Pt.Y + r),
+                        (Point)new Point2f(kpt.Pt.X + r, kpt.Pt.Y - r), 
+                        color);
+                }
+            }
+
+
+            using (new Window("FREAK", dst)) // Display images 
+            {
+                Cv2.WaitKey();
+            }
+        }
+    }
+}
+
+
+
+
+#6.  gesture HandPose testing 
+using System.Collections.Generic;
+using OpenCvSharp;
+using OpenCvSharp.Dnn;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// To run this example first download the hand model available here: http://posefs1.perception.cs.cmu.edu/OpenPose/models/hand/pose_iter_102000.caffemodel
+    /// Or also available here https://github.com/CMU-Perceptual-Computing-Lab/openpose/tree/master/models
+    /// Add the files to the bin folder
+    /// </summary>
+    internal class HandPose : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            const string model = "pose_iter_102000.caffemodel";// Gesture detection network model 
+            const string modelTxt = "pose_deploy.prototxt";// Model configuration file 
+            const string sampleImage = "hand.jpg";// The sample picture 
+            const string outputLoc = "Output_Hand.jpg";// Output image location 
+            const int nPoints = 22; // points 
+            const double thresh = 0.01;// threshold 
+      // Gesture pair 
+            int[][] posePairs =
+            {
+                new[] {0, 1}, new[] {1, 2}, new[] {2, 3}, new[] {3, 4}, //thumb thumb 
+                new[] {0, 5}, new[] {5, 6}, new[] {6, 7}, new[] {7, 8}, //index  index finger 
+                new[] {0, 9}, new[] {9, 10}, new[] {10, 11}, new[] {11, 12}, //middle  Middle finger 
+                new[] {0, 13}, new[] {13, 14}, new[] {14, 15}, new[] {15, 16}, //ring  ring finger    Ring finger 
+                new[] {0, 17}, new[] {17, 18}, new[] {18, 19}, new[] {19, 20}, //small  little finger 
+            };
+
+
+            using var frame = Cv2.ImRead(sampleImage);// Read sample pictures 
+            using var frameCopy = frame.Clone();// Back up sample images for drawing results 
+            int frameWidth = frame.Cols;
+            int frameHeight = frame.Rows;
+
+
+            float aspectRatio = frameWidth / (float) frameHeight;// Width height ratio 
+            int inHeight = 368;// Height after treatment 
+            int inWidth = ((int) (aspectRatio * inHeight) * 8) / 8;// Width after treatment 
+
+
+            using var net = CvDnn.ReadNetFromCaffe(modelTxt, model);// Read the network model 
+      //BlobFromImage  Preprocess the image , Including the minus mean , Scaling , tailoring , Switching channel, etc , Return to one 4 The tunnel blob(blob It can be simply understood as a N An array of dimensions , Input for neural networks )
+            using var inpBlob = CvDnn.BlobFromImage(frame, 1.0 / 255, new Size(inWidth, inHeight),
+                new Scalar(0, 0, 0), false, false);
+
+
+            net.SetInput(inpBlob);// Set up network input 
+
+
+            using var output = net.Forward();// Calculate the output 
+            int H = output.Size(2);// high 
+            int W = output.Size(3);// wide 
+
+
+            var points = new List<Point>();
+
+
+            for (int n = 0; n < nPoints; n++)
+            {
+                // Probability map of corresponding body parts .Probability map of corresponding body's part.
+                using var probMap = new Mat(H, W, MatType.CV_32F, output.Ptr(0, n));
+                Cv2.Resize(probMap, probMap, new Size(frameWidth, frameHeight));// Zoom to original size 
+                Cv2.MinMaxLoc(probMap, out _, out var maxVal, out _, out var maxLoc);// Find the maximum point index and location 
+
+
+                if (maxVal > thresh)// Confidence is greater than the threshold 
+                {  // Plot the maximum probability point 
+                    Cv2.Circle(frameCopy, maxLoc.X, maxLoc.Y, 8, new Scalar(0, 255, 255), -1,
+                        LineTypes.Link8);
+          // Point number 
+                    Cv2.PutText(frameCopy, Cv2.Format(n), new OpenCvSharp.Point(maxLoc.X, maxLoc.Y),
+                        HersheyFonts.HersheyComplex, 1, new Scalar(0, 0, 255), 2, LineTypes.AntiAlias);
+                }
+
+
+                points.Add(maxLoc);// Add to point set 
+            }
+
+
+            int nPairs = 20; //(POSE_PAIRS).Length / POSE_PAIRS[0].Length;
+
+
+            for (int n = 0; n < nPairs; n++)
+            {
+                //  lookup 2 connected body/hand parts
+                Point partA = points[posePairs[n][0]];
+                Point partB = points[posePairs[n][1]];
+
+
+                if (partA.X <= 0 || partA.Y <= 0 || partB.X <= 0 || partB.Y <= 0)
+                    continue;
+        // The connecting part of the wire 
+                Cv2.Line(frame, partA, partB, new Scalar(0, 255, 255), 8);
+                Cv2.Circle(frame, partA.X, partA.Y, 8, new Scalar(0, 0, 255), -1);
+                Cv2.Circle(frame, partB.X, partB.Y, 8, new Scalar(0, 0, 255), -1);
+            }
+
+
+            var finalOutput = outputLoc;
+            Cv2.ImWrite(finalOutput, frame);
+        }
+    }
+}
+
+
+
+
+#7.  Histogram Histogram  Example 
+using System;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Histogram sample
+    /// http://book.mynavi.jp/support/pc/opencv2/c3/opencv_img.html
+    /// </summary>
+    class HistSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var src = Cv2.ImRead(ImagePath.Lenna, ImreadModes.Grayscale);
+
+
+            //  Histogram view  Histogram view
+            const int Width = 260, Height = 200;
+            using var render = new Mat(new Size(Width, Height), MatType.CV_8UC3, Scalar.All(255));// White background 260x200
+
+
+            //  Calculate the histogram Calculate histogram
+            var hist = new Mat();
+            int[] hdims = {256}; //  Histogram size of each dimension  Histogram size for each dimension
+            Rangef[] ranges = { new Rangef(0,256), }; //  Range  min/max 
+            Cv2.CalcHist(
+                new Mat[]{src}, 
+                new int[]{0}, 
+                null,
+                hist, // Histogram 
+                1, 
+                hdims, // Statistics 256 Number of pixels 
+                ranges);// Calculate the histogram 
+  
+            //  Get the maximum value of histogram   Get the max value of histogram
+            Cv2.MinMaxLoc(hist, out _, out double maxVal);
+
+
+            var color = Scalar.All(100);// Color 
+            //  Scale and draw histograms  Scales and draws histogram
+            hist = hist * (maxVal != 0 ? Height / maxVal : 0.0); // After histogram normalization   Zoom to target height 
+            for (int j = 0; j < hdims[0]; ++j) 
+            {
+                int binW = (int)((double)Width / hdims[0]);// Every   The width of the rectangle 
+                render.Rectangle(
+                    new Point(j * binW, render.Rows - (int)hist.Get<float>(j)),
+                    new Point((j + 1) * binW, render.Rows),
+                    color, 
+                    -1);// Draw a rectangle 
+            }
+
+
+            using (new Window("Image", src, WindowFlags.AutoSize | WindowFlags.FreeRatio))// Show the original image 
+            using (new Window("Histogram", render, WindowFlags.AutoSize | WindowFlags.FreeRatio))// Show histogram 
+            {
+                Cv2.WaitKey();
+            }
+        }
+    }
+}
+
+
+
+
+#8.  Hog  Example 
+using System;
+using System.Diagnostics;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// samples/c/peopledetect.c
+    /// </summary>
+    internal class HOGSample : ConsoleTestBase
+    {
+        public HOGSample()
+        {
+        }
+
+
+        public override void RunTest()
+        {
+            using var img = Cv2.ImRead(ImagePath.Asahiyama, ImreadModes.Color);// Read sample pictures 
+
+
+            using var hog = new HOGDescriptor();
+            hog.SetSVMDetector(HOGDescriptor.GetDefaultPeopleDetector());// Set up hog Feature based support vector machine detector 
+
+
+            bool b = hog.CheckDetectorSize();// Detection scale 
+            Console.WriteLine("CheckDetectorSize: {0}", b);
+
+
+            var watch = Stopwatch.StartNew();
+
+
+            // run the detector with default parameters. to get a higher hit-rate
+            // (and more false alarms, respectively), decrease the hitThreshold and
+            // groupThreshold (set groupThreshold to 0 to turn off the grouping completely).
+      // Run the detector with default parameters . To get a higher hit rate （ And more false positives ）,
+      // Please lower  hitThreshold  and  groupThreshold（ take  groupThreshold  Set to  0  To completely close the grouping ）.
+      //Rect[] DetectMultiScale(Mat img, double hitThreshold = 0, Size? winStride = null, Size? padding = null, double scale = 1.05, int groupThreshold = 2);
+            Rect[] found = hog.DetectMultiScale(img, 0, new Size(8, 8), new Size(24, 16), 1.05, 2);// Multiscale detection  
+
+
+            watch.Stop();
+            Console.WriteLine("Detection time = {0}ms", watch.ElapsedMilliseconds);// Test time 
+            Console.WriteLine("{0} region(s) found", found.Length);// How many areas are found 
+
+
+            foreach (Rect rect in found)
+            {
+                // the HOG detector returns slightly larger rectangles than the real objects.
+                // so we slightly shrink the rectangles to get a nicer output.
+        //HOG  The detector returns a rectangle slightly larger than the real object .
+                 //  So let's shrink the rectangle a little bit to get a better output .
+                var r = new Rect
+                {
+                    X = rect.X + (int)Math.Round(rect.Width * 0.1),
+                    Y = rect.Y + (int)Math.Round(rect.Height * 0.1),
+                    Width = (int)Math.Round(rect.Width * 0.8),
+                    Height = (int)Math.Round(rect.Height * 0.8)
+                };
+                img.Rectangle(r.TopLeft, r.BottomRight, Scalar.Red, 3);// Draw a rectangle 
+            }
+
+
+            using var window = new Window("people detector", img, WindowFlags.Normal);// Show test results 
+            window.SetProperty(WindowPropertyFlags.Fullscreen, 1);
+            Cv2.WaitKey(0);
+        }
+    }
+}
+
+
+#9.   Hough transform example  / Line detection by Hough transform 
+using System;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Hough Transform Sample / ハフ Change による Straight line measurement 
+    /// </summary>
+    /// <remarks>http://opencv.jp/sample/special_transforms.html#hough_line</remarks>
+    class HoughLinesSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            SampleCpp();      
+        }
+
+
+        /// <summary>
+        /// sample of new C++ style wrapper
+        /// </summary>
+        private void SampleCpp()
+        {
+            // (1)  Load image 
+            using var imgGray = new Mat(ImagePath.Goryokaku, ImreadModes.Grayscale);// grayscale  
+            using var imgStd = new Mat(ImagePath.Goryokaku, ImreadModes.Color);// Standard straight line test result diagram 
+            using var imgProb = imgStd.Clone();// Probability line detection result diagram 
+            // Canny edge detection  Preprocess
+            Cv2.Canny(imgGray, imgGray, 50, 200, 3, false);
+
+
+            // (3) Run the Standard Hough transform  Run Standard Hough Transform 
+      //HoughLines(InputArray image, double rho, double theta, int threshold, double srn = 0, double stn = 0);
+      //image  8  position 、 single channel 、 Binary source image . Pictures can be modified by functions 
+      //rho   The distance resolution of the accumulator （ In pixels ）
+      //theta   Angular resolution of the accumulator （ In radians ）
+      //threshold   Accumulator threshold parameter . Only return the rows that get enough votes （>  threshold ）
+      //srn   For the multiscale Hough transform , It's the range resolution  rho  The divisor of .[ The default is  0]
+      //stn  For the multiscale Hough transform , It's the range resolution  theta  The divisor of .[ The default is  0]
+      //  The output vector of the line . Each line consists of a two element vector  (rho, theta)  Express .rho  Is the distance from the coordinate origin  (0,0)（ The upper left corner of the image ） Distance of ,theta  Is the rotation angle of the line in radians 
+            LineSegmentPolar[] segStd = Cv2.HoughLines(imgGray, 1, Math.PI / 180, 50, 0, 0);// Finding lines in binary images using standard Hough transform .
+            int limit = Math.Min(segStd.Length, 10);// Draw up to ten lines 
+            for (int i = 0; i < limit; i++)
+            {
+                //  Draw the resulting line 
+                float rho = segStd[i].Rho;
+                float theta = segStd[i].Theta;
+                double a = Math.Cos(theta);
+                double b = Math.Sin(theta);
+                double x0 = a * rho;// Straight line position x
+                double y0 = b * rho;
+                Point pt1 = new Point { X = (int)Math.Round(x0 + 1000 * (-b)), Y = (int)Math.Round(y0 + 1000 * (a)) };// The two ends of the straight line extend 1000  Get endpoint 
+                Point pt2 = new Point { X = (int)Math.Round(x0 - 1000 * (-b)), Y = (int)Math.Round(y0 - 1000 * (a)) };
+                imgStd.Line(pt1, pt2, Scalar.Red, 3, LineTypes.AntiAlias, 0);// Draw a straight line 
+            }
+
+
+            // (4)  Run probabilistic Hough transform   Run Probabilistic Hough Transform
+      //LineSegmentPoint[] HoughLinesP(InputArray image, double rho, double theta, int threshold, double minLineLength = 0, double maxLineGap = 0);
+      //rho  The distance resolution of the accumulator （ In pixels ）
+      //theta  Angular resolution of the accumulator （ In radians ）
+      //threshold  Accumulator threshold parameter . Only return the rows that get enough votes （>  threshold ）
+      //minLineLength. Segments shorter than this will be rejected .[ The default is  0]
+      //maxLineGap  Maximum allowable gap between points on the same line connecting them .[ The default is  0]
+      // Output line. Each line consists of a  4  Element vector  (x1, y1, x2,y2)  Express 
+            LineSegmentPoint[] segProb = Cv2.HoughLinesP(imgGray, 1, Math.PI / 180, 50, 50, 10);
+            foreach (LineSegmentPoint s in segProb)
+            {
+                imgProb.Line(s.P1, s.P2, Scalar.Red, 3, LineTypes.AntiAlias, 0);// Draw a straight line 
+            }
+
+
+            // (5)  Show results  Show results
+            using (new Window("Hough_line_standard", imgStd, WindowFlags.AutoSize))
+            using (new Window("Hough_line_probabilistic", imgProb, WindowFlags.AutoSize))
+            {
+                Window.WaitKey(0);
+            }
+        }
+    }
+}
+
+
+
+
+#10.   Repair , Remove watermark       Restoration is image interpolation . Digital restoration algorithm in image interpolation , Photo recovery , Zoom and super-resolution have a wide range of applications .
+using System;
+using System.IO;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Inpainting  The basic idea is very simple ： Replace the bad tags with adjacent pixels , Make it look like a neighbor 
+    /// </summary>
+    /// <remarks>http://opencv.jp/sample/special_transforms.html#inpaint</remarks>
+    public class InpaintSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            // cvInpaint
+
+
+            Console.WriteLine(
+                "Hot keys: \n" +
+                "\tESC - quit the program\n" +
+                "\tr - restore the original image Restore the original picture \n" +
+                "\ti or ENTER - run inpainting algorithm\n" +
+                "\t\t(before running it, paint something on the image)\n" +
+                "\ts - save the original image, mask image, original+mask image and inpainted image to desktop, Put the original image 、 Mask image 、 original + Mask image and repair image are saved to the desktop "
+            );
+
+
+            using var img0 = Cv2.ImRead(ImagePath.Fruits, ImreadModes.AnyDepth | ImreadModes.AnyColor);// original image 
+            using var img = img0.Clone();// The original picture used as a drawing 
+            using var inpaintMask = new Mat(img0.Size(), MatType.CV_8U, Scalar.Black); // Mask 
+            using var inpainted = img0.EmptyClone();
+
+
+            using var wImage = new Window("image", img);//
+            var prevPt = new Point(-1, -1);
+      // Set the mouse callback 
+            wImage.SetMouseCallback((MouseEventTypes ev, int x, int y, MouseEventFlags flags, IntPtr userdata) =>
+            {
+                if (ev == MouseEventTypes.LButtonUp || (flags & MouseEventFlags.LButton) == 0)
+                {
+                    prevPt = new Point(-1, -1);
+                }
+                else if (ev == MouseEventTypes.LButtonDown)
+                {
+                    prevPt = new Point(x, y);
+                }
+                else if (ev == MouseEventTypes.MouseMove && (flags & MouseEventFlags.LButton) != 0)
+                {
+                    Point pt = new Point(x, y);
+                    if (prevPt.X < 0)
+                    {
+                        prevPt = pt;// The first point 
+                    }
+                    inpaintMask.Line(prevPt, pt, Scalar.White, 5, LineTypes.AntiAlias, 0);// Draw a line on the mask 
+                    img.Line(prevPt, pt, Scalar.White, 5, LineTypes.AntiAlias, 0);// Draw a straight line on the original drawing 
+                    prevPt = pt;// Update starting point 
+                    wImage.ShowImage(img);// Show the drawn picture 
+                }
+            });
+
+
+            Window wInpaint1 = null;
+            Window wInpaint2 = null;
+            try
+            {
+                for (; ; )
+                {
+                    switch ((char)Window.WaitKey(0))
+                    {
+                        case (char)27:    // exit
+                            return;
+                        case 'r':   //  Restore the original image restore original image
+                            inpaintMask.SetTo(Scalar.Black);//  The mask is initialized to black 
+                            img0.CopyTo(img);//
+                            wImage.ShowImage(img);// Show the original picture 
+                            break;
+                        case 'i':   // do Inpaint
+                        case '\r':
+              //src： Input 8 position 1 Channel or 3 Channel image .
+              //inpaintMask： Repair mask ,8 position 1 Channel image . Non zero pixels represent areas that need to be repaired .
+              //dst： Output and src Images of the same size and type .
+              //inpaintRadius： The algorithm considers the radius of the circular neighborhood of each point .
+              //flags：
+              //INPAINT_NS be based on Navier-Stokes Methods 
+              //Alexandru Telea Of INPAINT_TELEA Method 
+                            Cv2.Inpaint(img, inpaintMask, inpainted, 3, InpaintMethod.Telea);
+                            wInpaint1 ??= new Window("inpainted image (algorithm by Alexandru Telea)", WindowFlags.AutoSize);
+                            wInpaint1.ShowImage(inpainted);
+                            Cv2.Inpaint(img, inpaintMask, inpainted, 3, InpaintMethod.NS);
+                            wInpaint2 ??= new Window("inpainted image (algorithm by Navier-Strokes)", WindowFlags.AutoSize);
+                            wInpaint2.ShowImage(inpainted);
+                            break;
+                        case 's': // Save the picture  save images
+                            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);// Desktop path 
+                            img0.SaveImage(Path.Combine(desktop, "original.png"));
+                            inpaintMask.SaveImage(Path.Combine(desktop, "mask.png"));// Repair mask 
+                            img.SaveImage(Path.Combine(desktop, "original+mask.png"));// original image + Mask 
+                            inpainted.SaveImage(Path.Combine(desktop, "inpainted.png"));// Repaired image 
+                            break;
+                    }
+                }
+            }
+            finally
+            {
+                wInpaint1?.Dispose();
+                wInpaint2?.Dispose();
+                Window.DestroyAllWindows();
+            }
+        }
+    }
+}
+
+
+
+
+#11.  Use  KAZE  and  AKAZE  Algorithm to retrieve key points .
+using System;
+using System.Diagnostics;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Retrieves keypoints using the KAZE and AKAZE algorithm.
+    /// </summary>
+    internal class KAZESample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            var gray = new Mat(ImagePath.Lenna, ImreadModes.Grayscale);// grayscale 
+      // establish  KAZE  AKAZE
+            var kaze = KAZE.Create();
+            var akaze = AKAZE.Create();
+      // Initialize descriptor 
+            var kazeDescriptors = new Mat();//
+            var akazeDescriptors = new Mat();
+      // Initialize keys  kazeKeyPoints  akazeKeyPoints
+            KeyPoint[] kazeKeyPoints = null, akazeKeyPoints = null;
+      // Detection and calculation    Key points and descriptors 
+            var kazeTime = MeasureTime(() =>
+                kaze.DetectAndCompute(gray, null, out kazeKeyPoints, kazeDescriptors));
+            var akazeTime = MeasureTime(() =>
+                akaze.DetectAndCompute(gray, null, out akazeKeyPoints, akazeDescriptors));
+      // Detection result image initialization  dstKaze   dstAkaze 
+            var dstKaze = new Mat();
+            var dstAkaze = new Mat();
+      // Draw key points 
+            Cv2.DrawKeypoints(gray, kazeKeyPoints, dstKaze);
+            Cv2.DrawKeypoints(gray, akazeKeyPoints, dstAkaze);
+      // Display the test result diagram 
+            using (new Window(String.Format("KAZE [{0:F2}ms]", kazeTime.TotalMilliseconds), dstKaze))
+            using (new Window(String.Format("AKAZE [{0:F2}ms]", akazeTime.TotalMilliseconds), dstAkaze))
+            {
+                Cv2.WaitKey();
+            }
+        }
+    // computing time 
+        private TimeSpan MeasureTime(Action action)
+        {
+            var watch = Stopwatch.StartNew();
+            action();
+            watch.Stop();
+            return watch.Elapsed;
+        }
+    }
+}
+
+
+#12.   When the key length does not match   Single mapping transformation   matrix  H Calculation 
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.InteropServices;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// https://github.com/shimat/opencvsharp/issues/176
+  /// When the key length does not match  FindHomography
+    /// </summary>
+    class KAZESample2 : ConsoleTestBase
+    {
+        public static Point2d Point2fToPoint2d(Point2f pf)
+        {
+            return new Point2d(((int) pf.X), ((int) pf.Y));
+        }
+
+
+        public override void RunTest()
+        {
+      // Load two images 
+            using var img1 = new Mat(ImagePath.SurfBox);
+            using var img2 = new Mat(ImagePath.SurfBoxinscene);
+            using var descriptors1 = new Mat();
+            using var descriptors2 = new Mat();
+      // It is found that the two pictures are extracted separately N,M eigenvectors 
+      // Then on N and M The eigenvectors of the are matched , Find the best match 
+      // Then draw the matching features to display 
+            using var matcher = new BFMatcher(NormTypes.L2SQR);//Brute Force（ Violence law )opencv Common methods of two-dimensional feature point matching ,BFMatcher Always try all possible matches , So that it can always find the best match 
+            using var kaze = KAZE.Create();
+      // Calculation KAZE Key points and descriptors 
+            kaze.DetectAndCompute(img1, null, out var keypoints1, descriptors1);
+            kaze.DetectAndCompute(img2, null, out var keypoints2, descriptors2);
+      // Match descriptor 
+            DMatch[][] matches = matcher.KnnMatch(descriptors1, descriptors2, 2);
+            using Mat mask = new Mat(matches.Length, 1, MatType.CV_8U);// Construction mask nx1
+            mask.SetTo(new Scalar(255));// White background 
+            int nonZero = Cv2.CountNonZero(mask);// The returned gray value is not 0 The number of pixels , It can be used to judge whether the image is completely black 
+            VoteForUniqueness(matches, mask);// Unique voting 
+            nonZero = Cv2.CountNonZero(mask);// Returns the number of pixels with unique matching points 
+            nonZero = VoteForSizeAndOrientation(keypoints2, keypoints1, matches, mask, 1.5f, 20);// return mask Nonzero pixel number 
+
+
+            List<Point2f> obj = new List<Point2f>();// Points on objects 
+            List<Point2f> scene = new List<Point2f>();// Points on the scene 
+            List<DMatch> goodMatchesList = new List<DMatch>();// Good match 
+            //iterate through the mask only pulling out nonzero items because they're matches
+      // Traversal mask extracts only non-zero items , Because they are matches 
+            for (int i = 0; i < mask.Rows; i++)
+            {
+                MatIndexer<byte> maskIndexer = mask.GetGenericIndexer<byte>();
+                if (maskIndexer[i] > 0)
+                {
+                    obj.Add(keypoints1[matches[i][0].QueryIdx].Pt);// Key points on objects 
+                    scene.Add(keypoints2[matches[i][0].TrainIdx].Pt);// Key points in the scene 
+                    goodMatchesList.Add(matches[i][0]);// Good match 
+                }
+            }
+      //double  Key points 
+            List<Point2d> objPts = obj.ConvertAll(Point2fToPoint2d);
+            List<Point2d> scenePts = scene.ConvertAll(Point2fToPoint2d);
+            if (nonZero >= 4)// Match points 4 More than 
+            {  //https://blog.csdn.net/fengyeer20120/article/details/87798638
+        // Calculate the optimal single mapping transformation matrix between multiple two-dimensional point pairs  H（3 That's ok x3 Column ） , Use the least mean square error or RANSAC Method 
+        // The functionality ： Find the transformation matrix between two planes .https://blog.csdn.net/xull88619814/article/details/81587595
+                Mat homography = Cv2.FindHomography(objPts, scenePts, HomographyMethods.Ransac, 1.5, mask);//
+                nonZero = Cv2.CountNonZero(mask);
+
+
+                if (homography != null)
+                {
+                    Point2f[] objCorners = { new Point2f(0, 0),
+                                      new Point2f(img1.Cols, 0),
+                                      new Point2f(img1.Cols, img1.Rows),
+                                      new Point2f(0, img1.Rows) };// Four corners of the object 
+
+
+                    Point2d[] sceneCorners = MyPerspectiveTransform3(objCorners, homography);// The four corners of the scene ： The four corners of the object are calculated by coordinate transformation 
+
+
+                    //This is a good concat horizontal  This is a good horizontal splice 
+                    using Mat img3 = new Mat(Math.Max(img1.Height, img2.Height), img2.Width + img1.Width, MatType.CV_8UC3);
+                    using Mat left = new Mat(img3, new Rect(0, 0, img1.Width, img1.Height));
+                    using Mat right = new Mat(img3, new Rect(img1.Width, 0, img2.Width, img2.Height));
+                    img1.CopyTo(left);
+                    img2.CopyTo(right);
+          //
+                    mask.GetArray(out byte[] maskBytes);
+          // Draw matching point pairs 
+                    Cv2.DrawMatches(img1, keypoints1, img2, keypoints2, goodMatchesList, img3, Scalar.All(-1), Scalar.All(-1), maskBytes, DrawMatchesFlags.NotDrawSinglePoints);
+
+
+                    List<List<Point>> listOfListOfPoint2D = new List<List<Point>>();//
+                    List<Point> listOfPoint2D = new List<Point>
+                            {
+                                new Point(sceneCorners[0].X + img1.Cols, sceneCorners[0].Y),
+                                new Point(sceneCorners[1].X + img1.Cols, sceneCorners[1].Y),
+                                new Point(sceneCorners[2].X + img1.Cols, sceneCorners[2].Y),
+                                new Point(sceneCorners[3].X + img1.Cols, sceneCorners[3].Y)
+                            };// Four corners of the translated scene 
+                    listOfListOfPoint2D.Add(listOfPoint2D);
+                    img3.Polylines(listOfListOfPoint2D, true, Scalar.LimeGreen, 2);// Draw four corner polygons of the scene 
+
+
+                    //This works too
+                    //Cv2.Line(img3, scene_corners[0] + new Point2d(img1.Cols, 0), scene_corners[1] + new Point2d(img1.Cols, 0), Scalar.LimeGreen);
+                    //Cv2.Line(img3, scene_corners[1] + new Point2d(img1.Cols, 0), scene_corners[2] + new Point2d(img1.Cols, 0), Scalar.LimeGreen);
+                    //Cv2.Line(img3, scene_corners[2] + new Point2d(img1.Cols, 0), scene_corners[3] + new Point2d(img1.Cols, 0), Scalar.LimeGreen);
+                    //Cv2.Line(img3, scene_corners[3] + new Point2d(img1.Cols, 0), scene_corners[0] + new Point2d(img1.Cols, 0), Scalar.LimeGreen);
+
+
+                    img3.SaveImage("Kaze_Output.png");// Save results 
+                    Window.ShowImages(img3);// Show results 
+                }
+            }
+        }
+
+
+        // not used  to avoid opencvsharp's bug
+        static Point2d[] MyPerspectiveTransform1(Point2f[] yourData, Mat transformationMatrix)
+        {
+            using Mat src = new Mat(yourData.Length, 1, MatType.CV_32FC2, yourData);
+            using Mat dst = new Mat();
+            Cv2.PerspectiveTransform(src, dst, transformationMatrix);
+            dst.GetArray(out Point2f[] dstArray);
+            Point2d[] result = Array.ConvertAll(dstArray, Point2fToPoint2d);
+            return result;
+        }
+
+
+        // not used  fixed FromArray behavior
+        static Point2d[] MyPerspectiveTransform2(Point2f[] yourData, Mat transformationMatrix)
+        {
+            using var s = Mat<Point2f>.FromArray(yourData);
+            using var d = new Mat<Point2f>();
+            Cv2.PerspectiveTransform(s, d, transformationMatrix);
+            Point2f[] f = d.ToArray();
+            return f.Select(Point2fToPoint2d).ToArray();
+        }
+
+
+        // new API
+        static Point2d[] MyPerspectiveTransform3(Point2f[] yourData, Mat transformationMatrix)
+        {
+            Point2f[] ret = Cv2.PerspectiveTransform(yourData, transformationMatrix);
+            return ret.Select(Point2fToPoint2d).ToArray();
+        }
+    //  Having a unique matching point mask  White 255
+        static int VoteForSizeAndOrientation(KeyPoint[] modelKeyPoints, KeyPoint[] observedKeyPoints, DMatch[][] matches, Mat mask, float scaleIncrement, int rotationBins)
+        {
+            int idx = 0;
+            int nonZeroCount = 0;
+            byte[] maskMat = new byte[mask.Rows];
+            GCHandle maskHandle = GCHandle.Alloc(maskMat, GCHandleType.Pinned);
+            using (Mat m = new Mat(mask.Rows, 1, MatType.CV_8U, maskHandle.AddrOfPinnedObject()))
+            {
+                mask.CopyTo(m);///
+                List<float> logScale = new List<float>();//log The proportion   list 
+                List<float> rotations = new List<float>();// Rotation Angle   list 
+                double s, maxS, minS, r;
+                maxS = -1.0e-10f; minS = 1.0e10f;//    
+
+
+                //if you get an exception here, it's because you're passing in the model and observed keypoints backwards.  Just switch the order.
+        // If you encounter an exception here , That's because you're passing in the model and looking back at the keys . Just change the order .
+                for (int i = 0; i < maskMat.Length; i++)// Traversing a with a unique match point   Matches 
+                {
+                    if (maskMat[i] > 0)
+                    {
+                        KeyPoint observedKeyPoint = observedKeyPoints[i];//  Observe the matching points on the image 
+                        KeyPoint modelKeyPoint = modelKeyPoints[matches[i][0].TrainIdx];// Key points on the model 
+                        s = Math.Log10(observedKeyPoint.Size / modelKeyPoint.Size);//
+                        logScale.Add((float)s);
+                        maxS = s > maxS ? s : maxS;
+                        minS = s < minS ? s : minS;
+
+
+                        r = observedKeyPoint.Angle - modelKeyPoint.Angle;
+                        r = r < 0.0f ? r + 360.0f : r;
+                        rotations.Add((float)r);
+                    }
+                }
+
+
+                int scaleBinSize = (int)Math.Ceiling((maxS - minS) / Math.Log10(scaleIncrement));
+                if (scaleBinSize < 2)
+                    scaleBinSize = 2;
+                float[] scaleRanges = { (float)minS, (float)(minS + scaleBinSize + Math.Log10(scaleIncrement)) };
+
+
+                using var scalesMat = new Mat<float>(rows: logScale.Count, cols: 1, data: logScale.ToArray());
+                using var rotationsMat = new Mat<float>(rows: rotations.Count, cols: 1, data: rotations.ToArray());
+                using var flagsMat = new Mat<float>(logScale.Count, 1);
+                using Mat hist = new Mat();
+                flagsMat.SetTo(new Scalar(0.0f));
+                float[] flagsMatFloat1 = flagsMat.ToArray();
+
+
+                int[] histSize = { scaleBinSize, rotationBins };
+                float[] rotationRanges = { 0.0f, 360.0f };
+                int[] channels = { 0, 1 };
+                Rangef[] ranges = { new Rangef(scaleRanges[0], scaleRanges[1]), new Rangef(rotations.Min(), rotations.Max()) };
+
+
+                Mat[] arrs = { scalesMat, rotationsMat };
+                Cv2.CalcHist(arrs, channels, null, hist, 2, histSize, ranges);
+                Cv2.MinMaxLoc(hist, out double minVal, out double maxVal);
+
+
+                Cv2.Threshold(hist, hist, maxVal * 0.5, 0, ThresholdTypes.Tozero);
+                Cv2.CalcBackProject(arrs, channels, hist, flagsMat, ranges);
+
+
+                MatIndexer<float> flagsMatIndexer = flagsMat.GetIndexer();
+
+
+                for (int i = 0; i < maskMat.Length; i++)
+                {
+                    if (maskMat[i] > 0)
+                    {
+                        if (flagsMatIndexer[idx++] != 0.0f)
+                        {
+                            nonZeroCount++;
+                        }
+                        else
+                            maskMat[i] = 0;
+                    }
+                }
+                m.CopyTo(mask);/
+            }
+            maskHandle.Free();
+
+
+            return nonZeroCount;
+        }
+    // Vote for uniqueness 
+        private static void VoteForUniqueness(DMatch[][] matches, Mat mask, float uniqnessThreshold = 0.80f)
+        {
+            byte[] maskData = new byte[matches.Length];
+            GCHandle maskHandle = GCHandle.Alloc(maskData, GCHandleType.Pinned);// This method creates a handle to the managed object , This prevents the collection of managed objects 
+            using (Mat m = new Mat(matches.Length, 1, MatType.CV_8U, maskHandle.AddrOfPinnedObject()))
+            {
+                mask.CopyTo(m);
+                for (int i = 0; i < matches.Length; i++)
+                {
+                    // This is also called  NNDR  Nearest neighbor distance ratio  This is also known as NNDR Nearest Neighbor Distance Ratio
+                    if ((matches[i][0].Distance / matches[i][1].Distance) <= uniqnessThreshold)
+                        maskData[i] = 255;//： white    There is a unique match point 
+                    else
+                        maskData[i] = 0; // There is no unique match point 
+                }
+                m.CopyTo(mask);
+            }
+            maskHandle.Free();
+        }
+    }
+}
+
+
+
+
+#13.  Mat  Submatrix operation 
+using System;
+using System.Threading.Tasks;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// 
+    /// </summary>
+    class MatOperations : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            SubMat();
+            RowColRangeOperation();
+            RowColOperation();
+        }
+
+
+        /// <summary>
+        ///  Submatrix operation   Submatrix operations
+        /// </summary>
+        private void SubMat()
+        {
+            using var src = Cv2.ImRead(ImagePath.Lenna);// Read source image 
+
+
+            // Assign small image to mat
+            using var small = new Mat();
+            Cv2.Resize(src, small, new Size(100, 100));// Zoom source image 
+            src[10, 110, 10, 110] = small;// Zoomed small image   Replace the source image section 
+            src[370, 470, 400, 500] = small.T(); // After the small scaled image is rotated   Replace the source image section  
+            // ↑ This is the same as the following :
+            //small.T().CopyTo(src[370, 470, 400, 500]);
+
+
+            // Get part mat（ Be similar to cvSetImageROI） Get partial mat (similar to cvSetImageROI)
+            Mat part = src[200, 400, 200, 360];
+            //  Invert some pixel values Invert partial pixel values
+            Cv2.BitwiseNot(part, part);
+
+
+            //  Use color  (128, 0, 0)  Fill area  (50..100, 100..150)  
+            part = src.SubMat(50, 100, 400, 450);
+            part.SetTo(128);
+
+
+            using (new Window("SubMat", src))// Show results 
+            {
+                Cv2.WaitKey();
+            }
+
+
+            part.Dispose();
+        }
+
+
+        /// <summary>
+        /// Submatrix operations
+        /// </summary>
+        private void RowColRangeOperation()
+        {
+            using var src = Cv2.ImRead(ImagePath.Lenna);// The source image 
+
+
+            Cv2.GaussianBlur(
+                src.RowRange(100, 200),
+                src.RowRange(200, 300),
+                new Size(7, 7), 20);// Submatrix Gaussian filter 
+
+
+            Cv2.GaussianBlur(
+                src.ColRange(200, 300),
+                src.ColRange(100, 200),
+                new Size(7, 7), 20);
+
+
+            using (new Window("RowColRangeOperation", src))
+            {
+                Cv2.WaitKey();
+            }
+        }
+
+
+        /// <summary>
+        /// Submatrix expression operations
+        /// </summary>
+        private void RowColOperation()
+        {
+            using var src = Cv2.ImRead(ImagePath.Lenna);// Read source image 
+
+
+            var rand = new Random();
+      // Randomly swap two rows of pixels 
+            for (int i = 0; i < 200; i++)//
+            {
+                int c1 = rand.Next(100, 400);
+                int c2 = rand.Next(100, 400);
+                using Mat temp = src.Row(c1).Clone();// A random line 
+                src.Row(c2).CopyTo(src.Row(c1));
+                temp.CopyTo(src.Row(c2));
+            }
+
+
+            ((Mat)~src.ColRange(450, 500)).CopyTo(src.ColRange(0, 50));// Copy the image of the specified area 
+
+
+            src.RowRange(450, 460).SetTo(new Scalar(0, 0, 255)); // Set the image of the specified area to   Red 
+
+
+            using (new Window("RowColOperation", src))
+            {
+                Cv2.WaitKey();
+            }
+        }
+    }
+}
+
+
+
+
+#14.            Multielement scaling method 
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Multidimensional Scaling ( Multielement scaling method )
+    /// for C++ cv::Mat testing
+    /// </summary>
+    class MDS : ConsoleTestBase
+    {
+        /// <summary>
+        /// The United States 10 The distance between two cities 
+        /// </summary>
+        /// <example>
+        /// * The straight distance between Atlanta and Chicago is  587  km .The linear distance between Atlanta and Chicago is 587km.
+        /// </example>
+        static readonly double[,] CityDistance = 
+        {
+            /*Atlanta*/         {0,      587,    1212,   701,    1936,   604,    748,    2139,   2182,   543},
+            /*Chicago*/         {587,    0,      920,    940,    1745,   1188,   713,    1858,   1737,   597},
+            /*Denver*/          {1212,   920,    0,      879,    831,    1726,   1631,   949,    1021,   1494},
+            /*Houston*/         {701,    940,    879,    0,      1734,   968,    1420,   1645,   1891,   1220},
+            /*Los Angeles*/     {1936,   1745,   831,    1734,   0,      2339,   2451,   347,    959,    2300},
+            /*Miami*/           {604,    1188,   1726,   968,    2339,   0,      1092,   2594,   2734,   923},
+            /*New York*/        {748,    713,    1631,   1420,   2451,   1092,   0,      2571,   2408,   205},
+            /*San Francisco*/   {2139,   1858,   949,    1645,   347,    2594,   2571,   0,      678,    2442},
+            /*Seattle*/         {2182,   1737,   1021,   1891,   959,    2734,   2408,   678,    0,      2329},
+            /*Washington D.C.*/ {543,    597,    1494,   1220,   2300,   923,    205,    2442,   2329,   0}
+        };
+
+
+        /// <summary>
+        ///  City name 
+        /// </summary>
+        static readonly string[] CityNames = 
+        {
+            "Atlanta","Chicago","Denver","Houston","Los Angeles","Miami","New York","San Francisco","Seattle","Washington D.C."
+        };
+
+
+
+
+        /// <summary>
+        ///  Classic multidimensional scaling  Classical Multidimensional Scaling
+        /// </summary>
+        public override void RunTest()
+        {
+            //  Create a distance matrix 
+            int size = CityDistance.GetLength(0);
+            var t = new Mat(size, size, MatType.CV_64FC1, CityDistance);
+            // take  Torgerson  The additive constant of is added to  t adds Torgerson's additive constant to t
+            double torgarson = Torgerson(t);
+            t += torgarson;
+            // Yes  t  Square all the elements of  squares all elements of t
+            t = t.Mul(t);
+
+
+            // Center matrix  G centering matrix G
+            using var g = CenteringMatrix(size);
+            //  Calculate the inner product matrix  Bcalculates inner product matrix B
+            using var b = g * t * g.T() * -0.5;
+            // Calculation  B  Eigenvalues and eigenvectors    calculates eigenvalues and eigenvectors of B
+            using var values = new Mat();
+            using var vectors = new Mat();
+            Cv2.Eigen(b, values, vectors);/// Calculation  B  Eigenvalues and eigenvectors 
+            for (int r = 0; r < values.Rows; r++)
+            {
+                if (values.Get<double>(r) < 0)
+                    values.Set<double>(r, 0);
+            }
+
+
+            //Console.WriteLine(values.Dump());
+
+
+            // take  sqrt(eigenvalue)  Multiply by the eigenvector   multiplies sqrt(eigenvalue) by eigenvector
+            using var result = vectors.RowRange(0, 2);
+            {
+                var at = result.GetGenericIndexer<double>();
+                for (int r = 0; r < result.Rows; r++)
+                {
+                    for (int c = 0; c < result.Cols; c++)
+                    {
+                        at[r, c] *= Math.Sqrt(values.Get<double>(r));
+                    }
+                }
+            }
+
+
+            // normalization  scaling
+            Cv2.Normalize(result, result, 0, 800, NormTypes.MinMax);
+
+
+            // opens a window
+            using (Mat img = Mat.Zeros(600, 800, MatType.CV_8UC3))
+            using (var window = new Window("City Location Estimation"))
+            {
+                var at = result.GetGenericIndexer<double>();
+                for (int c = 0; c < size; c++)
+                {
+                    double x = at[0, c];
+                    double y = at[1, c];
+                    x = x * 0.7 + img.Width * 0.1;
+                    y = y * 0.7 + img.Height * 0.1;
+                    img.Circle((int)x, (int)y, 5, Scalar.Red, -1);
+                    Point textPos = new Point(x + 5, y + 10);
+                    img.PutText(CityNames[c], textPos, HersheyFonts.HersheySimplex, 0.5, Scalar.White);
+                }
+                window.Image = img;
+                Cv2.WaitKey();
+            }
+        }
+
+
+        /// <summary>
+        ///  return  Torgerson  The addition constant of Returns Torgerson's additive constant
+        /// </summary>
+        /// <param name="mat"></param>
+        /// <returns></returns>
+        private double Torgerson(Mat mat)
+        {
+            if (mat == null)
+                throw new ArgumentNullException();
+            if (mat.Rows != mat.Cols) // The matrix is square 
+                throw new ArgumentException();
+
+
+            int n = mat.Rows;
+            // Negative value    Additive constant  Additive constant in case of negative value
+            Cv2.MinMaxLoc(-mat, out _, out double max);
+            double c2 = max;
+            // Of trigonometric inequalities    Additive constant  Additive constant from triangular inequality
+            double c1 = 0;
+
+
+            var at = mat.GetGenericIndexer<double>();// Get type specific indexers . Indexers have fetchers / Setter to access each matrix element .
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = 0; j < n; j++)
+                {
+                    for (int k = 0; k < n; k++)
+                    {
+                        double v = at[i, k] - at[i, j] - at[j, k];
+                        if (v > c1)
+                        {
+                            c1 = v;
+                        }
+                    }
+                }
+            }
+            return Math.Max(Math.Max(c1, c2), 0);
+        }
+
+
+        /// <summary>
+        /// Returns centering matrix
+        /// </summary>
+        /// <param name="n">Size of matrix</param>
+        /// <returns></returns>
+        private Mat CenteringMatrix(int n)
+        {
+            using var eye = Mat.Eye(n, n, MatType.CV_64FC1) ;
+            return (eye - 1.0 / n);
+        }
+    }
+}
+
+
+
+
+#15.  Channel splitting / Merge   test 
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    class MergeSplitSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            // Split/Merge Test
+            {
+                using var src = new Mat(ImagePath.Lenna, ImreadModes.Color);// The source image 
+
+
+                // Split each plane
+                Cv2.Split(src, out var planes);// The separation channel 
+
+
+                Cv2.ImShow("planes 0", planes[0]);
+                Cv2.ImShow("planes 1", planes[1]);
+                Cv2.ImShow("planes 2", planes[2]);
+                Cv2.WaitKey();
+                Cv2.DestroyAllWindows();
+
+
+                // Invert G plane
+                Cv2.BitwiseNot(planes[1], planes[1]);//G The channel is reversed 
+
+
+                // Merge
+                using var merged = new Mat();
+                Cv2.Merge(planes, merged);// Hybrid channel 
+
+
+                Cv2.ImShow("src", src);
+                Cv2.ImShow("merged", merged);
+                Cv2.WaitKey();
+                Cv2.DestroyAllWindows();
+            }
+
+
+            //  Mixed channel test   MixChannels Test
+            {
+                using var rgba = new Mat(300, 300, MatType.CV_8UC4, new Scalar(50, 100, 150, 200));// Solid color diagram 
+                using var bgr = new Mat(rgba.Rows, rgba.Cols, MatType.CV_8UC3);
+                using var alpha = new Mat(rgba.Rows, rgba.Cols, MatType.CV_8UC1);
+
+
+                Mat[] input = { rgba };//4 passageway 
+                Mat[] output = { bgr, alpha };//4 passageway 
+                // rgba[0] -> bgr[2], rgba[1] -> bgr[1],
+                // rgba[2] -> bgr[0], rgba[3] -> alpha[0]
+                int[] fromTo = { 0, 2, 1, 1, 2, 0, 3, 3 };
+                Cv2.MixChannels(input, output, fromTo); // Hybrid channel 
+
+
+                Cv2.ImShow("rgba", rgba);
+                Cv2.ImShow("bgr", bgr);
+                Cv2.ImShow("alpha", alpha);
+                Cv2.WaitKey();
+                Cv2.DestroyAllWindows();
+            }
+        }
+    }
+}
+
+
+#16. 
+using OpenCvSharp;
+using SampleBase;
+using System.Threading.Tasks;
+
+
+namespace SamplesCore
+{
+    class MorphologySample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var gray = new Mat(ImagePath.Lenna, ImreadModes.Grayscale);// grayscale 
+            using var binary = new Mat();// Binary figure 
+            using var dilate1 = new Mat(); // Expansion diagram 1
+            using var dilate2 = new Mat();
+            byte[] kernelValues = {0, 1, 0, 1, 1, 1, 0, 1, 0}; //  Kernel value     cross (+)
+            using var kernel = new Mat(3, 3, MatType.CV_8UC1, kernelValues);// Convolution kernel 
+
+
+            //  Gray image binarization    Binarize
+            Cv2.Threshold(gray, binary, 0, 255, ThresholdTypes.Otsu);
+
+
+            // empty kernel
+            Cv2.Dilate(binary, dilate1, null);// Empty kernel 
+            // + kernel
+            Cv2.Dilate(binary, dilate2, kernel);// inflation 
+
+
+            Cv2.ImShow("binary", binary);
+            Cv2.ImShow("dilate (kernel = null)", dilate1);
+            Cv2.ImShow("dilate (kernel = +)", dilate2);
+            Cv2.WaitKey(0);
+            Cv2.DestroyAllWindows();
+        }
+    }
+}
+
+
+#17.   Maximum extremum stable region    Maximum extremum stable region , It is a segmentation and matching algorithm similar to watershed image . It has SIFT SURF And  ORB And so on , In recent years, it has been widely used in the field of image segmentation and matching .
+//https://blog.csdn.net/hust_bochu_xuchao/article/details/52230694
+//https://blog.csdn.net/qq_41685265/article/details/104096152
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Maximum stable extremum region  Maximally Stable Extremal Regions
+    /// </summary>
+    class MSERSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using Mat src = new Mat(ImagePath.Distortion, ImreadModes.Color);// The source image 
+            using Mat gray = new Mat();
+            using Mat dst = src.Clone();
+            Cv2.CvtColor(src, gray, ColorConversionCodes.BGR2GRAY);// grayscale 
+
+
+            CppStyleMSER(gray, dst);  // C++ style
+
+
+            using (new Window("MSER src", src))
+            using (new Window("MSER gray", gray))
+            using (new Window("MSER dst", dst))
+            {
+                Cv2.WaitKey();
+            }
+        }
+        
+        /// <summary>
+        /// Extracts MSER by C++-style code (cv::MSER)
+        /// </summary>
+        /// <param name="gray"></param>
+        /// <param name="dst"></param>
+        private void CppStyleMSER(Mat gray, Mat dst)
+        {
+            MSER mser = MSER.Create();
+            mser.DetectRegions(gray, out Point[][] contours, out _);// Extract feature areas            C++ Specify the minimum and maximum dimensions of the detected area , In order to limit the number of features to be detected 
+            foreach (Point[] pts in contours)
+            {
+                Scalar color = Scalar.RandomColor();// Random color 
+                foreach (Point p in pts)
+                {
+                    dst.Circle(p, 1, color);// Draw outline points 
+                }
+            }
+        }
+    }
+}
+
+
+#17. 
+using System;
+using System.Collections.Generic;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    class NormalArrayOperations : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            Threshold1();
+            Threshold2();
+            Threshold3();
+        }
+  
+        /// <summary>
+        ///  Run threshold on byte array  Run thresholding to byte array 
+        /// </summary>
+        private void Threshold1()
+        {
+            const int T = 3;// threshold 
+            const int Max = 5;// Maximum 
+
+
+            byte[] input = {1, 2, 3, 4, 5, };
+            var output = new List<byte>();
+
+
+            Cv2.Threshold(InputArray.Create(input), OutputArray.Create(output),
+                T, Max, ThresholdTypes.Binary);// Byte array   Threshold processing 
+
+
+            Console.WriteLine("Threshold: {0}", T);
+            Console.WriteLine("input:  {0}", string.Join(",", input));
+            Console.WriteLine("output: {0}", string.Join(",", output));
+        }
+
+
+        /// <summary>
+        /// Run thresholding to short array 
+        /// </summary>
+        private void Threshold2()
+        {
+            const int T = 150;
+            const int Max = 250;
+
+
+            short[] input = { 50, 100, 150, 200, 250, };
+            var output = new List<short>();
+
+
+            Cv2.Threshold(InputArray.Create(input), OutputArray.Create(output),
+                T, Max, ThresholdTypes.Binary);
+
+
+            Console.WriteLine("Threshold: {0}", T);
+            Console.WriteLine("input:  {0}", string.Join(",", input));
+            Console.WriteLine("output: {0}", string.Join(",", output));
+        }
+
+
+        /// <summary>
+        /// Run thresholding to struct array 
+        /// </summary>
+        private void Threshold3()
+        {
+            const double T = 2000;
+            const double Max = 5000;
+
+
+            // threshold does not support Point (int)      Run threshold processing on the structure array 
+            Point2f[] input = { 
+                                  new Point2f(1000, 1500),
+                                  new Point2f(2000, 2001),
+                                  new Point2f(500, 5000), 
+                              };
+            var output = new List<Point2f>();
+
+
+            Cv2.Threshold(InputArray.Create(input), OutputArray.Create(output),
+                T, Max, ThresholdTypes.Binary);
+
+
+            Console.WriteLine("Threshold: {0}", T);
+            Console.WriteLine("input:  {0}", string.Join(",", input));
+            Console.WriteLine("output: {0}", string.Join(",", output));
+        }
+    }
+}
+
+
+#18.OpenVino  Deep learning     https://zhuanlan.zhihu.com/p/91882515
+using System.Collections.Generic;
+using OpenCvSharp;
+using OpenCvSharp.Dnn;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// To run this example first you nedd to compile OPENCV with Intel OpenVino
+    /// Download the face detection model available here: https://github.com/openvinotoolkit/open_model_zoo/tree/master/models/intel/face-detection-adas-0001
+    /// Add the files to the bin folder
+  /// To run this example first , You need Intel  OpenVino  compile  OPENCV. Download the face detection model here ：https://github.com/openvinotoolkit/open_model_zoo/tree/master/models/intel/face-detection-adas-0001. Add files to  bin  Folder 
+    /// </summary>
+    internal class OpenVinoFaceDetection : ConsoleTestBase
+    {
+        const string modelFace = "face-detection-adas-0001.bin"; //   Weight file 
+        const string modelFaceTxt = "face-detection-adas-0001.xml";//  Description of network structure 
+        const string sampleImage = "sample.jpg";
+        const string outputLoc = "sample_output.jpg";
+
+
+        public override void RunTest()
+        {
+            using var frame = Cv2.ImRead(sampleImage);// Diagram to be tested 
+            int frameHeight = frame.Rows;
+            int frameWidth = frame.Cols;
+
+
+            using var netFace = CvDnn.ReadNet(modelFace, modelFaceTxt);  // Read the model     
+            netFace.SetPreferableBackend(Backend.INFERENCE_ENGINE);
+            netFace.SetPreferableTarget(Target.CPU);
+      
+            using var blob = CvDnn.BlobFromImage(frame, 1.0, new Size(672, 384), new Scalar(0, 0, 0), false, false);
+      netFace.SetInput(blob);// Set input 
+      
+            using (var detection = netFace.Forward())// Face detection 
+            {
+                using var detectionMat = new Mat(detection.Size(2), detection.Size(3), MatType.CV_32F, detection.Ptr(0));// Detection matrix 
+
+
+                for (int i = 0; i < detectionMat.Rows; i++)
+                {
+                    float confidence = detectionMat.At<float>(i, 2);// Degree of confidence 
+
+
+                    if (confidence > 0.7)
+                    {
+                        int x1 = (int)(detectionMat.At<float>(i, 3) * frameWidth); //xmin
+                        int y1 = (int)(detectionMat.At<float>(i, 4) * frameHeight); //ymin
+                        int x2 = (int)(detectionMat.At<float>(i, 5) * frameWidth); //xmax
+                        int y2 = (int)(detectionMat.At<float>(i, 6) * frameHeight); //ymax                            
+
+
+                        var roi = new Rect(x1, y1, (x2 - x1), (y2 - y1));              
+                        roi = AdjustBoundingBox(roi);              
+                        Cv2.Rectangle(frame, roi, new Scalar(0, 255, 0), 2, LineTypes.Link4);// Draw a rectangle 
+                    }
+                }
+            }
+                
+            var finalOutput = outputLoc;
+            Cv2.ImWrite(finalOutput, frame);
+        }
+    // Adjust the bounding box 
+        private Rect AdjustBoundingBox(Rect faceRect)
+        {
+            int w = faceRect.Width;
+            int h = faceRect.Height;
+
+
+            faceRect.X -= (int)(0.067 * w);
+            faceRect.Y -= (int)(0.028 * h);
+
+
+            faceRect.Width += (int)(0.15 * w);
+            faceRect.Height += (int)(0.13 * h);
+
+
+            if (faceRect.Width < faceRect.Height)
+            {
+                var dx = (faceRect.Height - faceRect.Width);
+                faceRect.X -= dx / 2;
+                faceRect.Width += dx;
+            }
+            else
+            {
+                var dy = (faceRect.Width - faceRect.Height);
+                faceRect.Y -= dy / 2;
+                faceRect.Height += dy;
+            }
+            return faceRect;
+        }
+    }
+}
+
+
+#19.   Example of perspective transformation  Perspective Transform Sample
+using OpenCvSharp;
+using System;
+using System.Collections.Generic;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    public class PerspectiveTransformSample : ConsoleTestBase
+    {
+        private readonly List<Point2f> point2Fs = new List<Point2f>();
+
+
+        private Point2f[] srcPoints = new Point2f[] {
+            new Point2f(0, 0),
+            new Point2f(0, 0),
+            new Point2f(0, 0),
+            new Point2f(0, 0),
+        };//   Four points selected by the mouse on the source image 
+
+
+        private readonly Point2f[] dstPoints = new Point2f[] {
+            new Point2f(0, 0),
+            new Point2f(0, 480),
+            new Point2f(640, 480),
+            new Point2f(640, 0),
+        };// Four corners on the target image 
+
+
+        private Mat OriginalImage;// original image 
+
+
+        public override void RunTest()
+        {
+            OriginalImage = new Mat(ImagePath.SurfBoxinscene, ImreadModes.AnyColor);// Read images 
+            using var Window = new Window("result", OriginalImage);// Show the original image 
+
+
+            Cv2.SetMouseCallback(Window.Name, CallbackOpenCVAnnotate);// Set the mouse callback 
+            Window.WaitKey();
+        }
+
+
+        private void CallbackOpenCVAnnotate(MouseEventTypes e, int x, int y, MouseEventFlags flags, IntPtr userdata)
+        {
+            if (e == MouseEventTypes.LButtonDown)
+            {
+                point2Fs.Add(new Point2f(x, y)); // Left click on four points 
+                if (point2Fs.Count == 4)
+                {
+                    srcPoints = point2Fs.ToArray();// List to array 
+                    using var matrix = Cv2.GetPerspectiveTransform(srcPoints, dstPoints);// Get perspective transform 
+                    using var dst = new Mat(new Size(640, 480), MatType.CV_8UC3);
+          // Perspective transform the image , It's deformation 
+                    Cv2.WarpPerspective(OriginalImage, dst, matrix, dst.Size());// The area surrounded by four points on the source image   Perspective mapping   To the target image 
+                    using var dsts = new Window("dst", dst);// Display the target image 
+                    point2Fs.Clear();
+                    Window.WaitKey();
+                }
+            }
+        }
+    }
+}
+
+
+#20.   Edge filtering    Detail enhanced filtering      Pencil sketch filtering     water color 
+//https://learnopencv.com/non-photorealistic-rendering-using-opencv-python-c/
+//https://blog.csdn.net/ellispy/article/details/118974305
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// sample of photo module methods  Example of photographing module method 
+    /// </summary>
+    class PhotoMethods : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var src = new Mat(ImagePath.Fruits, ImreadModes.Color);// The source image 
+
+
+            using var normconv = new Mat(); 
+            using var recursFiltered = new Mat();
+      
+      //EdgePreservingFilter(InputArray src, OutputArray dst, EdgePreservingMethods flags = EdgePreservingMethods.RecursFilter, float sigmaS = 60, float sigmaR = 0.4F);
+      // Edge preserving filter (Edge Preserving Filter) It refers to a kind of special filter that can effectively preserve the edge information in the image during the filtering process . Two sided filter （Bilateral filter）、 Pilot filter （Guided image filter）、 Weighted least square filter （Weighted least square filter） For several well-known edge preserving filters .
+      // Gaussian bilateral blur and mean shift Two edge preserving filtering algorithms with mean blur , Because of the large amount of calculation , Image edge preserving filtering cannot be realized in real time , Limiting their use scenarios ,OpenCV A fast edge preserving filtering algorithm is also implemented .
+      //src： Input  8  position  3  Channel image .
+      //dst： Output  8  position  3  Channel image .
+      //flags： Edge protection filtering   cv::RECURS_FILTER  or  cv::NORMCONV_FILTER.
+      //sigma_s： The value range is  0～200.
+      //sigma_r： The value range is  0～1.
+      // When sigma_s  When the value remains unchanged ,sigma_r  The larger the image, the more obvious the filtering effect ;
+      // When sigma_r  When the value remains unchanged , window  sigma_s  The larger the image, the more obvious the blur effect ;
+      // When sgma_r When the value is very small , window  sigma_s  No matter how the value changes , The effect of image bilateral filtering is not good ！
+      //https://blog.csdn.net/kingkee/article/details/95942906
+            Cv2.EdgePreservingFilter(src, normconv, EdgePreservingMethods.NormconvFilter); //   Normalized convolution filter 
+            Cv2.EdgePreservingFilter(src, recursFiltered, EdgePreservingMethods.RecursFilter); // Recursive filtering 
+      
+      // Image effects  OpenCV  Oil Painting   And   Unreal rendering  (Stylization Watercolor , edgePreservingFilter, detailEnhance, pencilSketch describe )
+      // Detail enhancement filter  ( detailEnhance )
+      // seeing the name of a thing one thinks of its function , Filters enhance detail , Make the image look clearer .
+            using var detailEnhance = new Mat();
+            Cv2.DetailEnhance(src, detailEnhance);
+      
+      // Pencil sketch filter （pencilSketch）
+      // This filter produces an output that looks like a pencil sketch . There are two outputs , One is the result of applying filters to color input images , The other is the result of applying it to the grayscale version of the input image . To be frank , I'm not impressed with this filter , Because the result doesn't look good .
+            using var pencil1 = new Mat(); 
+            using var pencil2 = new Mat();
+            Cv2.PencilSketch(src, pencil1, pencil2);
+      
+      //Stylization Filter ( stylization )
+      // The output produced by the watercolor filter looks like an image painted with watercolor .
+            using var stylized = new Mat();
+            Cv2.Stylization(src, stylized);
+
+
+            using (new Window("src", src))
+            using (new Window("edgePreservingFilter - NormconvFilter", normconv))
+            using (new Window("edgePreservingFilter - RecursFilter", recursFiltered))
+            using (new Window("detailEnhance", detailEnhance))
+            using (new Window("pencilSketch grayscale", pencil1))
+            using (new Window("pencilSketch color", pencil2))
+            using (new Window("stylized", stylized))
+            {
+                Cv2.WaitKey();
+            }
+        }
+    }
+}
+
+
+#21.   Pixel access 
+using System;
+using System.Diagnostics;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Swaps B for R  In exchange for B R passageway 
+    /// </summary>
+    class PixelAccess : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            Console.WriteLine("Get/Set: {0}ms", MeasureTime(GetSet));
+            Console.WriteLine("GenericIndexer: {0}ms", MeasureTime(GenericIndexer));// Indexer methods accessing and setting element values 
+            Console.WriteLine("TypeSpecificMat: {0}ms", MeasureTime(TypeSpecificMat));
+            Console.Read();
+        }
+
+
+        /// <summary>
+        ///  slow Slow
+        /// </summary>
+        private void GetSet()
+        {
+            using var mat = new Mat(ImagePath.Lenna, ImreadModes.Color);// The source image 
+            for (int y = 0; y < mat.Height; y++)
+            {
+                for (int x = 0; x < mat.Width; x++)
+                {
+                    Vec3b color = mat.Get<Vec3b>(y, x);// Get pixel color 
+                    Vec3b newColor = new Vec3b(color.Item2, color.Item1, color.Item0);
+                    mat.Set<Vec3b>(y, x, newColor);// Set pixel color  
+                }
+            }
+            //Cv2.ImShow("Slow", mat);
+            //Cv2.WaitKey(0);
+            //Cv2.DestroyAllWindows();
+        }
+
+
+        /// <summary>
+        ///  Pretty fast  Reasonably fast
+        /// </summary>
+        private void GenericIndexer()
+        {
+            using var mat = new Mat(ImagePath.Lenna, ImreadModes.Color);// The source image 
+            var indexer = mat.GetGenericIndexer<Vec3b>(); // Get type specific indexers . Indexers have fetchers / Setter to access each matrix element .
+            for (int y = 0; y < mat.Height; y++)
+            {
+                for (int x = 0; x < mat.Width; x++)
+                {
+                    Vec3b color = indexer[y, x];// Indexer accesses pixel values 
+                    Vec3b newColor = new Vec3b(color.Item2, color.Item1, color.Item0);
+                    indexer[y, x] = newColor;// Indexer sets element value 
+                }
+            }
+            //Cv2.ImShow("GenericIndexer", mat);
+            //Cv2.WaitKey(0);
+            //Cv2.DestroyAllWindows();
+        }
+
+
+        /// <summary>
+        /// Faster  Faster 
+        /// </summary>
+        private void TypeSpecificMat()
+        {
+            using var mat = new Mat(ImagePath.Lenna, ImreadModes.Color);// The source image 
+            var mat3 = new Mat<Vec3b>(mat);// Specify the type 
+            var indexer = mat3.GetIndexer();// Get type specific indexers . Indexers have fetchers / Setter to access each matrix element .
+            for (int y = 0; y < mat.Height; y++)
+            {
+                for (int x = 0; x < mat.Width; x++)
+                {
+                    Vec3b color = indexer[y, x];// visit 
+                    Vec3b newColor = new Vec3b(color.Item2, color.Item1, color.Item0);
+                    indexer[y, x] = newColor;// Set up 
+                }
+            }
+            //Cv2.ImShow("TypeSpecificMat", mat);
+            //Cv2.WaitKey(0);
+            //Cv2.DestroyAllWindows();
+        }
+    // Method run time    timing  
+        private static long MeasureTime(Action action)
+        {
+            var watch = Stopwatch.StartNew();
+            action();
+            watch.Stop();
+            return watch.ElapsedMilliseconds;
+        }
+    }
+}
+
+
+
+
+#22.   caffemodel  Deep learning model   Reasoning 
+using System.Collections.Generic;
+using OpenCvSharp;
+using OpenCvSharp.Dnn;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// To run this example first download the pose model available here: https://github.com/CMU-Perceptual-Computing-Lab/openpose/tree/master/models
+    /// Add the files to the bin folder To run this example , Please download the available pose models here first ：
+  ///https://github.com/CMU-Perceptual-Computing-Lab/openpose/tree/master/models. Add files to  bin  Folder 
+    /// </summary>
+    internal class Pose : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            const string model = "pose_iter_160000.caffemodel";// Weight file 
+            const string modelTxt = "pose_deploy_linevec_faster_4_stages.prototxt";// The configuration file  
+            const string sampleImage = "single.jpeg";
+            const string outputLoc = "Output-Skeleton.jpg";
+            const int nPoints = 15;
+            const double thresh = 0.1;
+
+
+            int[][] posePairs =
+            {
+                new[] {0, 1}, new[] {1, 2}, new[] {2, 3},
+                new[] {3, 4}, new[] {1, 5}, new[] {5, 6},
+                new[] {6, 7}, new[] {1, 14}, new[] {14, 8}, new[] {8, 9},
+                new[] {9, 10}, new[] {14, 11}, new[] {11, 12}, new[] {12, 13},
+            };
+            
+            using var frame = Cv2.ImRead(sampleImage);
+            using var frameCopy = frame.Clone();
+            int frameWidth = frame.Cols;
+            int frameHeight = frame.Rows;
+
+
+            const int inWidth = 368;
+            const int inHeight = 368;
+
+
+            using var net = CvDnn.ReadNetFromCaffe(modelTxt, model);// Read the model 
+            net.SetPreferableBackend(Backend.OPENCV);
+            net.SetPreferableTarget(Target.CPU);
+
+
+            using var inpBlob = CvDnn.BlobFromImage(frame, 1.0 / 255, new Size(inWidth, inHeight), new Scalar(0, 0, 0), false, false);
+
+
+            net.SetInput(inpBlob);// Set input 
+
+
+            using var output = net.Forward();// Feedforward calculation 
+            int H = output.Size(2);
+            int W = output.Size(3);
+
+
+            var points = new List<Point>();
+
+
+            for (int n = 0; n < nPoints; n++)
+            {
+                //  Probability map of corresponding body parts .Probability map of corresponding body's part.
+                using var probMap = new Mat(H, W, MatType.CV_32F, output.Ptr(0, n));
+                var p = new Point2f(-1,-1);
+
+
+                Cv2.MinMaxLoc(probMap, out _, out var maxVal, out _, out var maxLoc);
+
+
+                var x = (frameWidth * maxLoc.X) / W;
+                var y = (frameHeight * maxLoc.Y) / H;
+
+
+                if (maxVal > thresh)
+                {
+                    p = maxLoc;
+                    p.X *= (float)frameWidth / W;
+                    p.Y *= (float)frameHeight / H;
+
+
+                    Cv2.Circle(frameCopy, (int)p.X, (int)p.Y, 8, new Scalar(0, 255, 255), -1);
+                    Cv2.PutText(frameCopy, Cv2.Format(n), new Point((int)p.X, (int)p.Y), HersheyFonts.HersheyComplex, 1, new Scalar(0, 0, 255), 2);
+                }
+
+
+                points.Add((Point)p);
+            }
+            int nPairs = 14; //(POSE_PAIRS).Length / POSE_PAIRS[0].Length;
+
+
+            for (int n = 0; n < nPairs; n++)
+            {
+                //  lookup  2  A connected body / Hand parts  lookup 2 connected body/hand parts
+                Point partA = points[posePairs[n][0]];
+                Point partB = points[posePairs[n][1]];
+
+
+                if (partA.X <= 0 || partA.Y <= 0 || partB.X <= 0 || partB.Y <= 0)
+                    continue;
+
+
+                Cv2.Line(frame, partA, partB, new Scalar(0, 255, 255), 8);
+                Cv2.Circle(frame, partA.X, partA.Y, 8, new Scalar(0, 0, 255), -1);
+                Cv2.Circle(frame, partB.X, partB.Y, 8, new Scalar(0, 0, 255), -1);
+            }
+      
+            var finalOutput = outputLoc;
+            Cv2.ImWrite(finalOutput, frame);
+        }
+    }
+}
+
+
+#23.   Seamless image fusion -seamlessClone
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// cv::seamlessClone
+    /// </summary>
+    class SeamlessClone : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            Mat src = new Mat(ImagePath.Girl, ImreadModes.Color);// The source image 
+            Mat dst = new Mat(ImagePath.Lenna, ImreadModes.Color);// Target image 
+            Mat src0 = src.Resize(dst.Size(), 0, 0, InterpolationFlags.Lanczos4);// The source image is scaled to match the size of the target image 
+            Mat mask = Mat.Zeros(src0.Size(), MatType.CV_8UC3);// Mask initialization ： Source image size 
+      //https://www.jianshu.com/p/5b1f98f10518
+            mask.Circle(200, 200, 100, Scalar.White, -1);// White circle    The black area in the mask indicates that the pixels in this area are deleted , White means that the pixels in this area are reserved . Black is 0, White is 255;
+
+
+            Mat blend1 = new Mat();
+            Mat blend2 = new Mat();
+            Mat blend3 = new Mat();
+      //SeamlessClone(InputArray src, InputArray dst, InputArray? mask, Point p, OutputArray blend, SeamlessCloneMethods flags);
+      //src   Input 8 position 3 Channel image ( Capture a large picture of the target )
+      //dst   Input 8 position 3 Channel image ( The target background icon to be pasted )
+      //mask   Input 8 position 1 or 3 Channel image ( Target mask area image )
+      //p   The object is placed in the target image dst Position in 
+      //blend   Output image , And dst Of the same size and type .
+      //flags   The cloning method can be cv :: NORMAL_CLONE,cv :: MIXED_CLONE or cv :: MONOCHROME_TRANSFER
+            Cv2.SeamlessClone(
+                src0, dst, mask, new Point(260, 270), blend1,
+                SeamlessCloneMethods.NormalClone);//NORMAL_CLONE:  No reservation dst  Graphic texture details . The gradient of the target region is determined only by the source image 
+            Cv2.SeamlessClone(
+                src0, dst, mask, new Point(260, 270), blend2,
+                SeamlessCloneMethods.MonochromeTransfer);//MONOCHROME_TRANSFER:  No reservation src Color details of the image , Only src The texture of the image , The color is the same as the target image , It can be used for skin texture filling .
+            Cv2.SeamlessClone(
+                src0, dst, mask, new Point(260, 270), blend3,
+                SeamlessCloneMethods.MixedClone);//MIXED_CLONE:  Retain dest Graphic texture  details . The gradient of the target area is calculated by the combination of the original image and the target image ( Calculation dominat gradient).
+
+
+            using (new Window("src", src0))
+            using (new Window("dst", dst))
+            using (new Window("mask", mask))
+            using (new Window("blend NormalClone", blend1))
+            using (new Window("blend MonochromeTransfer", blend2))
+            using (new Window("blend MixedClone", blend3))
+            {
+                Cv2.WaitKey();
+            }
+        }
+    }
+}
+
+
+#24. SIFT and SURF  Example of feature matching  
+//https://blog.csdn.net/qq_38338086/article/details/121673036
+using OpenCvSharp;
+using OpenCvSharp.Features2D;
+using OpenCvSharp.XFeatures2D;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// SIFT and SURF sample
+    /// http://www.prism.gatech.edu/~ahuaman3/docs/OpenCV_Docs/tutorials/nonfree_1/nonfree_1.html
+    /// </summary>
+    class SiftSurfSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var src1 = new Mat(ImagePath.Match1, ImreadModes.Color);
+            using var src2 = new Mat(ImagePath.Match2, ImreadModes.Color);
+
+
+            MatchBySift(src1, src2);
+            MatchBySurf(src1, src2);
+        }
+    //Scale Invariant Feature Transform(SIFT)  Scale invariant feature transformation .SIFT Features are used to describe the local features of an image .
+    // Is a key point （ Or feature points ） Detection and description of the algorithm .SIFT The algorithm is applied to the extraction of image feature points ,
+    // Firstly, the scale space representation of the image is established , Then search the extreme points of the image in the scale space , Through these extreme points （ Also called key point , Characteristic point .
+    // Contains three main messages ： Location 、 scale 、 Direction ）, Thus the feature description vector is established . Through the feature description vector to do image recognition and detection problems .
+        private void MatchBySift(Mat src1, Mat src2)
+        {
+            using var gray1 = new Mat();
+            using var gray2 = new Mat();
+      // A grayscale image of two images 
+            Cv2.CvtColor(src1, gray1, ColorConversionCodes.BGR2GRAY);
+            Cv2.CvtColor(src2, gray2, ColorConversionCodes.BGR2GRAY);
+
+
+            using var sift = SIFT.Create();// Instantiation sift
+
+
+            //  Use  SIFT  Detect keys and generate their descriptors ( Feature description vector )
+            using var descriptors1 = new Mat<float>();
+            using var descriptors2 = new Mat<float>();
+            sift.DetectAndCompute(gray1, null, out var keypoints1, descriptors1);
+            sift.DetectAndCompute(gray2, null, out var keypoints2, descriptors2);
+
+
+            //  Match descriptor vector  Match descriptor vectors
+            using var bfMatcher = new BFMatcher(NormTypes.L2, false);
+            using var flannMatcher = new FlannBasedMatcher();
+            DMatch[] bfMatches = bfMatcher.Match(descriptors1, descriptors2);
+            DMatch[] flannMatches = flannMatcher.Match(descriptors1, descriptors2);
+
+
+            // Draw matches  Draw matches
+            using var bfView = new Mat();
+            Cv2.DrawMatches(gray1, keypoints1, gray2, keypoints2, bfMatches, bfView);
+            using var flannView = new Mat();
+            Cv2.DrawMatches(gray1, keypoints1, gray2, keypoints2, flannMatches, flannView);
+
+
+            using (new Window("SIFT matching (by BFMather)", bfView))
+            using (new Window("SIFT matching (by FlannBasedMatcher)", flannView))
+            {
+                Cv2.WaitKey();
+            }
+        }
+    //SURF English full name Speeded Up Robust Features, Direct translation is “ The robustness of the accelerated version ”.
+    // By Herbert Bay Et al. 2006 Put forward in . It's something like SIFT The algorithm of feature point detection and description , yes SIFT An accelerated version of .
+    //SIFT The biggest disadvantage of the algorithm is that it is difficult to achieve real-time without the help of hardware or special image processor .
+    // and SURF The implementation principle of the algorithm draws lessons from SIFT in DOG The idea of simplifying approximations , Using Hessian matrix （Hessian matrix） Determinant approximation image .
+    //SURF adopt Hessian The determinant of the matrix to determine the position of the point of interest , In the neighborhood of interest points Haar Wavelet response to determine descriptor .
+        private void MatchBySurf(Mat src1, Mat src2)
+        {
+            using var gray1 = new Mat();
+            using var gray2 = new Mat();
+
+
+            Cv2.CvtColor(src1, gray1, ColorConversionCodes.BGR2GRAY);
+            Cv2.CvtColor(src2, gray2, ColorConversionCodes.BGR2GRAY);
+
+
+            using var surf = SURF.Create(200, 4, 2, true);
+
+
+            // Detect the keypoints and generate their descriptors using SURF
+            using var descriptors1 = new Mat<float>();
+            using var descriptors2 = new Mat<float>();
+            surf.DetectAndCompute(gray1, null, out var keypoints1, descriptors1);
+            surf.DetectAndCompute(gray2, null, out var keypoints2, descriptors2);
+
+
+            // Match descriptor vectors 
+            using var bfMatcher = new BFMatcher(NormTypes.L2, false);
+            using var flannMatcher = new FlannBasedMatcher();
+            DMatch[] bfMatches = bfMatcher.Match(descriptors1, descriptors2);
+            DMatch[] flannMatches = flannMatcher.Match(descriptors1, descriptors2);
+
+
+            // Draw matches
+            using var bfView = new Mat();
+            Cv2.DrawMatches(gray1, keypoints1, gray2, keypoints2, bfMatches, bfView);
+            using var flannView = new Mat();
+            Cv2.DrawMatches(gray1, keypoints1, gray2, keypoints2, flannMatches, flannView);
+
+
+            using (new Window("SURF matching (by BFMather)", bfView))
+            using (new Window("SURF matching (by FlannBasedMatcher)", flannView))
+            {
+                Cv2.WaitKey();
+            }
+        }
+
+
+    }
+}
+/*
+https://blog.csdn.net/qq_38338086/article/details/121673036
+ORB（Oriented FAST and Rotated BRIEF） It is a fast algorithm for feature point extraction and description . This algorithm is based on Ethan Rublee, Vincent Rabaud, Kurt Konolige as well as Gary R.Bradski stay 2011 The title of the article is 《ORB：An Efficient Alternative to SIFT or SURF》 In the article of .ORB The algorithm is divided into two parts , They are feature point extraction and feature point description . Feature extraction is performed by FAST（Features from  Accelerated Segment Test） Algorithm developed from , The feature point description is based on BRIEF（Binary Robust IndependentElementary Features） Improved feature description algorithm .ORB The feature is that FAST Feature point detection method and BRIEF Combining feature descriptors , And on the basis of their original improvements and optimization . It is said that ,ORB The speed of the algorithm is sift Of 100 times , yes surf Of 10 times . It can be used for real-time feature detection .
+
+
+FAST（Features fromaccelerated segment test） It is a corner detection method , It can be used to extract feature points .FAST The algorithm is recognized as the fastest feature point extraction method .FAST The feature points extracted by the algorithm are very close to the corner type .FAST The corner detection algorithm was originally developed by Edward Rosten and Tom Drummond Put forward , The most outstanding advantage of this algorithm is its computational efficiency .FAST Key point detection is to detect the point of interest on the circumference 16 Pixels to judge , If the current center pixel after judgment is dark or bright , Will determine if it is a corner . The basic principle of the algorithm is that the circumference is 16 Pixels （ The radius is 3 Of Bresenham round ） To determine the center pixel P Whether it is a corner . From... In a clockwise direction on the circumference 1 To 16 Number the circumferential pixels in the order of . If there is on the circumference N The brightness of consecutive pixels is higher than that of the center pixel Ip Add the threshold t Still bright , Or darker than the brightness of the center pixel minus the threshold , The center pixel is called a corner .
+
+
+ORB The feature extraction in FAST Improved algorithm . be called oFAST（FAST Keypoint Orientation）. That is to say, using FAST After extracting feature points , Define the direction of a feature point , In this way, the rotation invariance of feature points can be realized .
+
+
+BRIEF（Binary Robust Independent Elementary Features） stay 2010 Was proposed in .BRIEF It describes the detected feature points , It is a binary coded descriptor , The traditional method of describing feature points using regional gray histogram is abandoned , It greatly speeds up the establishment of feature descriptors , At the same time, it also greatly reduces the time of feature matching , Is a very fast , Potential algorithms .
+
+
+ summary ： The three algorithms are actually very similar , stay opencv Only the function of feature extraction and the function of feature description are different .
+
+
+ Three algorithms are used to identify whether the targets of two graphs are the same , The basic process is summarized as follows ：
+
+
+1、 Find out the characteristic points in the two figures respectively . Feature detection by feature detector , The test results are placed in KeyPoint Type of vector in .
+
+
+2、 Describe the attributes of these feature points . Feature description is also called feature extraction , The first step is to obtain only a series of feature points , The second step is to generate eigenvectors , Get descriptors with feature extractors , And put it in the feature description matrix .
+
+
+3、 Compare the attributes of the feature points of the two pictures , If enough feature points have the same attributes , Then it can be considered that the goals in these two pictures are the same . Feature matching through a matcher （ The matcher is divided into FLANN Match violence ）, The matching results are placed in DMatch Type of vector in .
+*/
+
+
+
+
+#25.   Spot detection  https://blog.csdn.net/jsxyhelu2015/article/details/108251482
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    internal class SimpleBlobDetectorSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var src = Cv2.ImRead(ImagePath.Shapes);
+            using var detectedCircles = new Mat();
+            using var detectedOvals = new Mat();
+
+
+            // Invert the image. Shapes has a black background and SimpleBlobDetector doesn't seem to work well with that.
+      // Invert image .Shapes  With a black background ,SimpleBlobDetector  It doesn't seem to handle it well .
+            Cv2.BitwiseNot(src, src);
+
+
+            // Parameters tuned to detect only circles
+      // Adjust to... Only   Detection circle   Parameters of 
+            var circleParams = new SimpleBlobDetector.Params
+            {
+                MinThreshold = 10,// Starting threshold of binarization 
+                MaxThreshold = 230, // Termination threshold of binarization 
+
+
+                // The area is the number of pixels in the blob.
+        // Area is the number of pixels in the spot .
+                FilterByArea = true,
+                MinArea = 500,
+                MaxArea = 50000,
+
+
+                // Circularity is a ratio of the area to the perimeter. Polygons with more sides are more circular.
+        // Roundness is the ratio of area to perimeter . Polygons with more edges are rounder .
+                FilterByCircularity = true,
+                MinCircularity = 0.9f,
+
+
+                // Convexity is the ratio of the area of the blob to the area of its convex hull.
+        // Convexity is the ratio of spot area to convex hull area .
+                FilterByConvexity = true,
+                MinConvexity = 0.95f,
+
+
+                // A circle's inertia ratio is 1. A line's is 0. An oval is between 0 and 1.
+        // The inertia ratio of a circle is  1. The inertia ratio of the straight line is  0. Ellipse in  0  and  1  Between .
+                FilterByInertia = true,
+                MinInertiaRatio = 0.95f
+            };
+
+
+            // Parameters tuned to find the ovals in the Shapes image.
+      // Adjust the parameters to  Shapes  Found in image   The ellipse .
+            var ovalParams = new SimpleBlobDetector.Params
+            {
+                MinThreshold = 10,
+                MaxThreshold = 230,
+                FilterByArea = true,
+                MinArea = 500,
+                // The ovals are the smallest blobs in Shapes, so we limit the max area to eliminate the larger blobs.
+        // The ellipse is  Shapes  The smallest spot in , So we limit the maximum area to eliminate large spots .
+                MaxArea = 10000,
+                FilterByCircularity = true, The limiting variable of spot roundness , Default is unlimited 
+                MinCircularity = 0.58f,
+                FilterByConvexity = true,
+                MinConvexity = 0.96f,
+                FilterByInertia = true,
+                MinInertiaRatio = 0.1f
+            };
+
+
+            using var circleDetector = SimpleBlobDetector.Create(circleParams);
+            var circleKeyPoints = circleDetector.Detect(src);// Detection circle 
+            Cv2.DrawKeypoints(src, circleKeyPoints, detectedCircles, Scalar.HotPink, DrawMatchesFlags.DrawRichKeypoints);
+
+
+            using var ovalDetector = SimpleBlobDetector.Create(ovalParams);
+            var ovalKeyPoints = ovalDetector.Detect(src);// Detect elliptical spots 
+            Cv2.DrawKeypoints(src, ovalKeyPoints, detectedOvals, Scalar.HotPink, DrawMatchesFlags.DrawRichKeypoints);
+
+
+            using var w1 = new Window("Detected Circles", detectedCircles);
+            using var w2 = new Window("Detected Ovals", detectedOvals);
+
+
+            Cv2.WaitKey();
+        }
+    }
+}
+
+
+#26.  Solving equations   AX = Y  
+//https://blog.csdn.net/u014652390/article/details/52789591
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    ///  Solving equations 
+    /// </summary>
+    class SolveEquation : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            ByMat();
+            ByNormalArray();
+
+
+            Console.Read();
+        }
+
+
+        /// <summary>
+        /// Solve equation AX = Y
+        /// </summary>
+        private void ByMat()//Mat Format  
+        {
+            // x + y = 10
+            // 2x + 3y = 26
+            // (x=4, y=6)
+
+
+            double[,] av = {
+    {1, 1}, 
+                          {2, 3}};
+            double[] yv = {10, 26};
+
+
+            using var a = new Mat(2, 2, MatType.CV_64FC1, av);
+            using var y = new Mat(2, 1, MatType.CV_64FC1, yv);
+            using var x = new Mat();
+      // rank（A） =  n   The number of equations equals the number of unknowns ,  The equation has a unique exact solution , The solution usually has the elimination method that we are familiar with ,LU Decomposition 
+            Cv2.Solve(a, y, x, DecompTypes.LU);// Solving equations 
+      //rank(A) > n, The number of equations is more than the number of unknowns , The restrictions are too strict at this time , There is no exact solution , This equation is also called overdetermined equation . This is usually the case in engineering applications , When the exact solution cannot be found , We choose the optimal solution . This optimal solution , It is also called the least square solution .
+
+
+            Console.WriteLine("ByMat:");
+            Console.WriteLine("X1 = {0}, X2 = {1}", x.At<double>(0), x.At<double>(1));
+        }
+
+
+        /// <summary>
+        /// Solve equation AX = Y 
+        /// </summary>
+        private void ByNormalArray() // General array format 
+        {
+            // x + y = 10
+            // 2x + 3y = 26
+            // (x=4, y=6)
+
+
+            double[,] a = {
+    {1, 1}, 
+                          {2, 3}};
+
+
+            double[] y = { 10, 26 };
+
+
+            var x = new List<double>();
+
+
+            Cv2.Solve(
+                InputArray.Create(a), InputArray.Create(y),
+                OutputArray.Create(x),
+                DecompTypes.LU);
+
+
+            Console.WriteLine("ByNormalArray:");
+            Console.WriteLine("X1 = {0}, X2 = {1}", x[0], x[1]);
+        }
+    }
+}
+
+
+
+
+#27.  Use  StarDetector  Algorithm to retrieve key points .
+using OpenCvSharp;
+using OpenCvSharp.XFeatures2D;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Retrieves keypoints using the StarDetector algorithm.
+    /// </summary>
+    class StarDetectorSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            var dst = new Mat(ImagePath.Lenna, ImreadModes.Color);// Goal map 
+            var gray = new Mat(ImagePath.Lenna, ImreadModes.Grayscale);// grayscale 
+
+
+            StarDetector detector = StarDetector.Create(45); // Instantiation star detector 
+            KeyPoint[] keypoints = detector.Detect(gray);// Detect key points 
+
+
+            if (keypoints != null)
+            {
+                var color = new Scalar(0, 255, 0);
+                foreach (KeyPoint kpt in keypoints)
+                {
+                    float r = kpt.Size / 2;
+                    Cv2.Circle(dst, (Point)kpt.Pt, (int)r, color); // Draw the circle  
+          // Draw a cross 
+                    Cv2.Line(dst,
+                        (Point)new Point2f(kpt.Pt.X + r, kpt.Pt.Y + r),
+                        (Point)new Point2f(kpt.Pt.X - r, kpt.Pt.Y - r), 
+                        color);
+                    Cv2.Line(dst,
+                        (Point)new Point2f(kpt.Pt.X - r, kpt.Pt.Y + r),
+                        (Point)new Point2f(kpt.Pt.X + r, kpt.Pt.Y - r), 
+                        color);
+                }
+            }
+
+
+            using (new Window("StarDetector features", dst))
+            {
+                Cv2.WaitKey();
+            }
+        }
+    }
+}
+
+
+
+
+#28.   Image mosaic    Panorama 
+//https://blog.csdn.net/Thousand_drive/article/details/125084810
+//https://blog.csdn.net/guduruyu/article/details/80405880
+using System;
+using System.Collections.Generic;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    class Stitching : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            Mat[] images = SelectStitchingImages(200, 200, 10);
+
+
+            using var stitcher = Stitcher.Create(Stitcher.Mode.Scans);// Splicer    Stapler 
+            using var pano = new Mat();
+
+
+            Console.Write("Stitching start...");
+            // TODO: does not work??
+            var status = stitcher.Stitch(images, pano);// Mosaic image 
+            Console.WriteLine(" finish (status:{0})", status);
+
+
+            Window.ShowImages(pano);// Joining together the results 
+
+
+            foreach (var image in images)
+            {
+                image.Dispose();
+            }
+        }
+    // Generate the image to be spliced    Returns an array of .
+        private static Mat[] SelectStitchingImages(int width, int height, int count)
+        {
+            using var source = new Mat(@"Data\Image\lenna.png", ImreadModes.Color); // Read source image 
+            using var result = source.Clone();
+
+
+            var rand = new Random();
+            var mats = new List<Mat>();
+            for (int i = 0; i < count; i++) //  Random selection count Subarea 
+            {
+                int x1 = rand.Next(source.Cols - width);
+                int y1 = rand.Next(source.Rows - height);
+                int x2 = x1 + width;
+                int y2 = y1 + height;
+        // Draw a random quadrilateral border 
+                result.Line(new Point(x1, y1), new Point(x1, y2), new Scalar(0, 0, 255));
+                result.Line(new Point(x1, y2), new Point(x2, y2), new Scalar(0, 0, 255));
+                result.Line(new Point(x2, y2), new Point(x2, y1), new Scalar(0, 0, 255));
+                result.Line(new Point(x2, y1), new Point(x1, y1), new Scalar(0, 0, 255));
+
+
+                using var m = source[new Rect(x1, y1, width, height)];// Random source image   Specific large and small areas 
+                mats.Add(m.Clone());
+            }
+
+
+            using (new Window("stitching", result))
+            {
+                Cv2.WaitKey();
+            }
+
+
+            return mats.ToArray();
+        }
+    }
+}
+
+
+
+
+#29.   Triangulation  SubDiv2D 
+using System;
+using System.Linq;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// cv::Subdiv2D test
+    /// </summary>
+    class Subdiv2DSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            const int Size = 600;
+
+
+            //  Create random point list 
+            var rand = new Random();
+            var points = Enumerable.Range(0, 100).Select(_ =>
+                new Point2f(rand.Next(0, Size), rand.Next(0, Size))).ToArray();
+
+
+            using var imgExpr = Mat.Zeros(Size, Size, MatType.CV_8UC3);
+            using var img = imgExpr.ToMat();// Black background 
+            foreach (var p in points)
+            {
+                img.Circle((Point)p, 4, Scalar.Red, -1); // Draw the dot 
+            }
+
+
+            //  initialization  Subdiv2D
+            using var subdiv = new Subdiv2D();
+            subdiv.InitDelaunay(new Rect(0, 0, Size, Size));
+            subdiv.Insert(points);
+
+
+            //  draw  voronoi  chart  Draws voronoi diagram
+            subdiv.GetVoronoiFacetList(null, out var facetList, out var facetCenters);// Trigonometry   aggregate 
+
+
+            using var vonoroi = img.Clone();
+            foreach (var list in facetList)
+            {
+                var before = list.Last();// The last point 
+                foreach (var p in list)// Draw triangle 
+                {
+                    vonoroi.Line((Point)before, (Point)p, new Scalar(64, 255, 128), 1);
+                    before = p;
+                }
+            }
+
+
+            //  Draw the Delaunay diagram  Draws delaunay diagram
+            Vec4f[] edgeList = subdiv.GetEdgeList();
+            using var delaunay = img.Clone();
+            foreach (var edge in edgeList)
+            {
+                var p1 = new Point(edge.Item0, edge.Item1);
+                var p2 = new Point(edge.Item2, edge.Item3);
+                delaunay.Line(p1, p2, new Scalar(64, 255, 128), 1);
+            }
+
+
+            Cv2.ImShow("voronoi", vonoroi);
+            Cv2.ImShow("delaunay", delaunay);
+            Cv2.WaitKey();
+            Cv2.DestroyAllWindows();
+        }
+    }
+}
+
+
+
+
+#30.  Super resolution SuperResolution Algorithm  
+/*https://blog.csdn.net/LuohenYJ/article/details/108207700
+ Image super-resolution （Image Super Resolution） It refers to obtaining high-resolution images from low resolution images or image sequences . Image super-resolution is a very important research problem in the field of computer vision , It is widely used in medical image analysis 、 Biometrics 、 Video surveillance and security . With the development of deep learning technology , The method of image hyperspectral based on deep learning is applied to many test tasks , Compared with the traditional image super division method , Better performance and effect .
+*/
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+
+
+    class SuperResolutionSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            var capture = new VideoCapture();
+            capture.Set(VideoCaptureProperties.FrameWidth, 640);
+            capture.Set(VideoCaptureProperties.FrameHeight, 480);
+            capture.Open(-1);
+            if (!capture.IsOpened())
+                throw new Exception("capture initialization failed");
+
+
+            var fs = FrameSource.CreateFrameSource_Camera(-1);
+            var sr = SuperResolution.CreateBTVL1();
+            sr.SetInput(fs);
+
+
+            using var normalWindow = new Window("normal");// Normal resolution image 
+            using var srWindow = new Window("super resolution");// Super resolution image 
+            var normalFrame = new Mat();
+            var srFrame = new Mat();
+            while (true)
+            {
+                capture.Read(normalFrame);// Read one frame to normal resolution image 
+                sr.NextFrame(srFrame);// Take a super-resolution image 
+                if (normalFrame.Empty() || srFrame.Empty())
+                    break;
+        // Show 
+                normalWindow.ShowImage(normalFrame);
+                srWindow.ShowImage(srFrame);
+                Cv2.WaitKey(100);
+            }
+        }
+    }
+}
+
+
+#31.  SVM  Support vector machine   Example 
+using System;
+using OpenCvSharp;
+using OpenCvSharp.ML;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Support Vector Machine
+    /// </summary>
+    /// <remarks>http://opencv.jp/sample/svm.html#svm</remarks>
+    internal class SVMSample : ConsoleTestBase
+    {
+        private static double Function(double x)
+        {
+            return x + 50 * Math.Sin(x / 15.0);
+        }
+
+
+        public override void RunTest()
+        {
+            //  Test data        
+            var points = new Point2f[500];// Enter coordinate points 
+            var responses = new int[points.Length];// Respond to ： label 
+            var rand = new Random();
+            for (int i = 0; i < responses.Length; i++)
+            {
+                float x = rand.Next(0, 300);
+                float y = rand.Next(0, 300);
+                points[i] = new Point2f(x, y);// Random coordinate points 
+                responses[i] = (y > Function(x)) ? 1 : 2;// Above the curve 1   Under the curve 2
+            }
+
+
+            //  Show the training data   Show training data and f(x)
+            using (Mat pointsPlot = Mat.Zeros(300, 300, MatType.CV_8UC3))
+            {
+                for (int i = 0; i < points.Length; i++)
+                {
+                    int x = (int)points[i].X;
+                    int y = (int)(300 - points[i].Y);
+                    int res = responses[i];
+                    Scalar color = (res == 1) ? Scalar.Red : Scalar.GreenYellow;// label 1： Red ,     label 2： Green and yellow 
+                    pointsPlot.Circle(x, y, 2, color, -1); // Draw coordinate points  
+                }
+                //   draw a curve f(x)
+                for (int x = 1; x < 300; x++) // Traverse the width direction   Pixels  x
+                {
+                    int y1 = (int)(300 - Function(x - 1));
+                    int y2 = (int)(300 - Function(x));
+                    pointsPlot.Line(x - 1, y1, x, y2, Scalar.LightBlue, 1);
+                }
+                Window.ShowImages(pointsPlot);
+            }
+
+
+            //  Training  SVM     Train
+            var dataMat = new Mat(points.Length, 2, MatType.CV_32FC1, points);// Structural data mat
+            var resMat = new Mat(responses.Length, 1, MatType.CV_32SC1, responses);// Construct tags mat
+            using var svm = SVM.Create();
+            //  Normalized data   normalize data
+            dataMat /= 300.0;
+
+
+            // SVM parameters
+            svm.Type = SVM.Types.CSvc;
+            svm.KernelType = SVM.KernelTypes.Rbf; //
+            svm.TermCriteria = TermCriteria.Both(1000, 0.000001);// Iteration termination condition 
+            svm.Degree = 100.0;
+            svm.Gamma = 100.0;
+            svm.Coef0 = 1.0;
+            svm.C = 1.0;
+            svm.Nu = 0.5;
+            svm.P = 0.1;
+
+
+            svm.Train(dataMat, SampleTypes.RowSample, resMat);// Training 
+
+
+            //  Predict each pixel Predict for each 300x300 pixel
+            using Mat retPlot = Mat.Zeros(300, 300, MatType.CV_8UC3);
+            for (int x = 0; x < 300; x++)
+            {
+                for (int y = 0; y < 300; y++)
+                {
+                    float[] sample = { x / 300f, y / 300f };// To predict    Pixel coordinates  （ Origin in the upper left corner ）
+                    var sampleMat = new Mat(1, 2, MatType.CV_32FC1, sample);// To construct a prediction point mat Format 
+                    int ret = (int)svm.Predict(sampleMat);// forecast  
+                    var plotRect = new Rect(x, 300 - y, 1, 1);// draw a curve    The origin of the coordinates is   The lower left corner  
+                    if (ret == 1)  // The first category 
+                        retPlot.Rectangle(plotRect, Scalar.Red); // Red rectangle dot 
+                    else if (ret == 2) // The second category 
+                        retPlot.Rectangle(plotRect, Scalar.GreenYellow); // Green yellow rectangular dots 
+                }
+            }
+            Window.ShowImages(retPlot);// Display the pixel coordinate prediction result graph 
+        }
+
+
+    }
+}
+
+
+#32.   Video reading  
+using System;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+
+
+    class VideoCaptureSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            // Opens MP4 file (ffmpeg is probably needed)
+            using var capture = new VideoCapture(MoviePath.Bach); // open MP4 video 
+            if (!capture.IsOpened())
+                return;
+
+
+            int sleepTime = (int)Math.Round(1000 / capture.Fps); // Duration per frame 
+
+
+            using var window = new Window("capture");
+            // Frame image buffer  Frame image buffer
+            var image = new Mat();
+
+
+            // When the movie playback reaches end, Mat.data becomes NULL.
+      // When the video playback ends ,Mat.data  Turn into  NULL.
+            while (true)
+            {
+                capture.Read(image); // same as cvQueryFrame
+                if(image.Empty())
+                    break;
+
+
+                window.ShowImage(image);// Display images 
+                Cv2.WaitKey(sleepTime);
+            }
+        }
+    }
+}
+
+
+#33.  Video writing 
+using System;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    class VideoWriterSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            const string OutVideoFile = "out.avi"; // The output file 
+
+
+            // Opens MP4 file (ffmpeg is probably needed)
+            using var capture = new VideoCapture(MoviePath.Bach);// Open the video 
+
+
+            //  Read video frames and write them to  VideoWriter Read movie frames and write them to VideoWriter 
+            var dsize = new Size(640, 480); // Target output size 
+            using (var writer = new VideoWriter(OutVideoFile, -1, capture.Fps, dsize))// Open the output file 
+            {
+                Console.WriteLine("Converting each movie frames...");
+                using var frame = new Mat();
+                while(true)
+                {
+                    //  Read the picture  Read image
+                    capture.Read(frame);
+                    if(frame.Empty())
+                        break;
+
+
+                    Console.CursorLeft = 0;
+                    Console.Write("{0} / {1}", capture.PosFrames, capture.FrameCount);
+
+
+                    // grayscale -> canny -> resize
+                    using var gray = new Mat();
+                    using var canny = new Mat();
+                    using var dst = new Mat();
+                    Cv2.CvtColor(frame, gray, ColorConversionCodes.BGR2GRAY);// grayscale 
+                    Cv2.Canny(gray, canny, 100, 180);  // Edge detection map 
+                    Cv2.Resize(canny, dst, dsize, 0, 0, InterpolationFlags.Linear); // Zoom map 
+                    // Write mat to VideoWriter
+                    writer.Write(dst);// Write output file 
+                } 
+                Console.WriteLine();
+            }
+
+
+            // Watch the results video  Watch result movie
+            using (var capture2 = new VideoCapture(OutVideoFile))// Open output video 
+            using (var window = new Window("result"))
+            {
+                int sleepTime = (int)(1000 / capture.Fps);// Video duration 
+
+
+                using var frame = new Mat(); 
+                while (true)
+                {
+                    capture2.Read(frame);// Read a frame 
+                    if(frame.Empty())
+                        break;
+
+
+                    window.ShowImage(frame);// Show 
+                    Cv2.WaitKey(sleepTime);
+                }
+            }
+        }
+
+
+    }
+}
+
+
+
+
+#34.   Watershed algorithm example 
+//https://blog.csdn.net/sugarannie/article/details/53080168
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Watershed algorithm sample
+    /// </summary>
+    /// <remarks>http://opencv.jp/sample/segmentation_and_connection.html#watershed</remarks>
+    public class WatershedSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var srcImg = Cv2.ImRead(ImagePath.Lenna, ImreadModes.AnyDepth | ImreadModes.AnyColor);   // The source image          
+            using var markers = new Mat(srcImg.Size(), MatType.CV_32SC1, Scalar.All(0)); // Mark dot graph 
+
+
+            using (var window = new Window("image", srcImg))// Show source image 
+            {
+                using var dspImg = srcImg.Clone();// Copy source image 
+
+
+                // Window mouse events  Mouse event  
+                int seedNum = 0;
+                window.SetMouseCallback((MouseEventTypes ev, int x, int y, MouseEventFlags flags, IntPtr userdata) =>
+                {
+                    if (ev == MouseEventTypes.LButtonDown)
+                    {
+                        seedNum++;
+                        var pt = new Point(x, y);
+                        markers.Circle(pt, 10, Scalar.All(seedNum), Cv2.FILLED, LineTypes.Link8);// Draw marked points 
+                        dspImg.Circle(pt, 10, Scalar.White, 3, LineTypes.Link8);// Draw on the source image   Marker points 
+                        window.Image = dspImg;// Show graph with marked points 
+                    }
+                });
+                Window.WaitKey();
+            }
+
+
+            Cv2.Watershed(srcImg, markers);// Call watershed algorithm for segmentation   obtain  markers Watershed map 
+
+
+            //  Draw the watershed draws watershed
+            using var dstImg = srcImg.Clone(); 
+            for (int y = 0; y < markers.Height; y++)
+            {
+                for (int x = 0; x < markers.Width; x++)
+                {
+                    int idx = markers.Get<int>(y, x);// obtain markers  The category to which the pixel belongs 
+                    if (idx == -1)
+                    {
+                        dstImg.Rectangle(new Rect(x, y, 2, 2), Scalar.Red, -1);// draw   The pixel is 4 Red rectangle 
+                    }
+                }
+            }
+
+
+            using (new Window("watershed transform", dstImg)) // Show watershed transformation diagram 
+            {
+                Window.WaitKey();
+            }
+        }
+    }
+}
+
+
+#35. aruco Markers distinguish 
+/* One ArUco marker Is a binary square marker , It consists of a wide black edge and an internal binary matrix , The internal matrix determines their id. The black boundary is conducive to the rapid detection of the image , Binary coding can verify id, And allow the application of error detection and correction technology .marker The size of determines the size of the internal matrix . for example , One 4x4 Of marker from 16bits form .*/
+//https://blog.csdn.net/u010260681/article/details/77089657
+
+
+using System;
+using System.Collections.Generic;
+using OpenCvSharp;
+using OpenCvSharp.Aruco;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    public class ArucoSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            // FilePath.Image.Aruco  The position of the mark in the image in .The locations of the markers in the image at FilePath.Image.Aruco.
+            const int upperLeftMarkerId = 160; // top left corner aruco
+            const int upperRightMarkerId = 268;
+            const int lowerRightMarkerId = 176;
+            const int lowerLeftMarkerId = 168;
+
+
+            using var src = Cv2.ImRead(ImagePath.Aruco);// Read the picture 
+
+
+            var detectorParameters = DetectorParameters.Create();  //cv::aruco::DetectorParameters parameters;
+            detectorParameters.CornerRefinementMethod = CornerRefineMethod.Subpix;// Subpixel 
+            detectorParameters.CornerRefinementWinSize = 9;
+
+
+            using var dictionary = CvAruco.GetPredefinedDictionary(PredefinedDictionaryName.Dict4X4_1000);// Predefined dictionaries 
+      // Detected markers Stored in  corners  and  ids  In structure 
+            CvAruco.DetectMarkers(src, dictionary, out var corners, out var ids, detectorParameters, out var rejectedPoints);
+
+
+            using var detectedMarkers = src.Clone();
+            CvAruco.DrawDetectedMarkers(detectedMarkers, corners, ids, Scalar.Crimson);// Draw the detected tag  
+
+
+            // Find the index of the four markers in the ids array. We'll use this same index into the
+            // corners array to find the corners of each marker.
+      // stay  ids  Index of four tags found in array . We will be in corners  The same index is used in the array to find the corner of each tag .
+      // Search for elements that match the criteria defined by the specified predicate , And return to the whole  System.Array  The zero based index that first appeared in .
+            var upperLeftCornerIndex = Array.FindIndex(ids, id => id == upperLeftMarkerId);//
+            var upperRightCornerIndex = Array.FindIndex(ids, id => id == upperRightMarkerId);
+            var lowerRightCornerIndex = Array.FindIndex(ids, id => id == lowerRightMarkerId);
+            var lowerLeftCornerIndex = Array.FindIndex(ids, id => id == lowerLeftMarkerId);
+
+
+            // Make sure we find all four markers .Make sure we found all four markers.
+            if (upperLeftCornerIndex < 0 || upperRightCornerIndex < 0 
+                 || lowerRightCornerIndex < 0 || lowerLeftCornerIndex < 0)
+            {
+                return;
+            }
+
+
+            // Marker corners are stored clockwise beginning with the upper-left corner.
+            // Get the first (upper-left) corner of the upper-left marker.
+      // The marked corners are stored clockwise from the upper left corner .
+             //  Get the first... Of the upper left marker （ Top left ） horn .
+            var upperLeftPixel = corners[upperLeftCornerIndex][0];//
+            // Get the second... Marked in the upper right corner （ Upper right corner ）.Get the second (upper-right) corner of the upper-right marker.
+            var upperRightPixel = corners[upperRightCornerIndex][1];
+            // Get the third... Marked at the bottom right （ The lower right ） horn .Get the third (lower-right) corner of the lower-right marker.
+            var lowerRightPixel = corners[lowerRightCornerIndex][2];
+            // Get the fourth... Of the lower left marker （ The lower left ） Corner point  Get the fourth (lower-left) corner of the lower-left marker.
+            var lowerLeftPixel = corners[lowerLeftCornerIndex][3];
+
+
+            // Create coordinates to pass to  GetPerspectiveTransform   Create coordinates for passing to GetPerspectiveTransform
+            var sourceCoordinates = new List<Point2f>
+            {
+                upperLeftPixel, upperRightPixel, lowerRightPixel, lowerLeftPixel
+            };// An array of corner coordinates 
+            var destinationCoordinates = new List<Point2f>
+            {
+                new Point2f(0, 0),
+                new Point2f(1024, 0),
+                new Point2f(1024, 1024),
+                new Point2f(0, 1024),
+            };// Coordinate dictionary   
+
+
+            using var transform = Cv2.GetPerspectiveTransform(sourceCoordinates, destinationCoordinates);// Compute perspective transformation 
+            using var normalizedImage = new Mat();
+            Cv2.WarpPerspective(src, normalizedImage, transform, new Size(1024, 1024));// Do perspective transformation 
+
+
+            using var _1 = new Window("Original Image", src, WindowFlags.AutoSize);// Origin diagram 
+            using var _2 = new Window($"Found {ids.Length} Markers", detectedMarkers);// Detected marker map 
+            using var _3 = new Window("Normalized Image", normalizedImage);// Display the corrected image 
+
+
+            Cv2.WaitKey();
+        }
+    }
+}
+
+
+
+
+
+
+#36.    Moving target detection —— Background difference method (Background subtraction)
+//https://zhuanlan.zhihu.com/p/348113539
+/*
+ If there is a ready-made 、 A constant background image is of course the best , But because of the complexity of the scene 、 Unpredictability 、 And the existence of various environmental interference and noise , Such as the sudden change of light 、 The fluctuation of some objects in the actual background image 、 Camera shake 、 The impact of moving objects entering and leaving the scene on the original scene , Background modeling algorithms usually require to obtain background images when there are moving objects in the scene , This becomes one of the difficulties in background modeling . meanwhile , Due to the dynamic change of the background image , It is necessary to estimate and recover the background through the inter frame information of the video sequence , Background reconstruction , Selective background updating is another difficulty in background modeling .
+ Traditional background modeling methods include median method 、 Mean method background modeling 、 Single Gaussian distribution model 、 Mixed Gaussian distribution model 、 Kalman filter model and advanced background model , These methods are based on the pixel brightness value for mathematical calculation processing , So we say that moving object detection is based on statistical principles .*/
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    class BgSubtractorMOG : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var capture = new VideoCapture(MoviePath.Bach);
+            using var mog = BackgroundSubtractorMOG.Create();  // Create a mixed Gaussian background subtracter 
+            using var windowSrc = new Window("src");
+            using var windowDst = new Window("dst");
+
+
+            using var frame = new Mat();
+            using var fg = new Mat();
+            while (true)
+            {
+                capture.Read(frame);
+                if (frame.Empty())
+                    break;
+                mog.Apply(frame, fg, 0.01);// Background removal 
+
+
+                windowSrc.Image = frame;
+                windowDst.Image = fg;
+                Cv2.WaitKey(50);
+            }
+        }
+    }
+}
+
+
+
+
+37. Local binarization algorithm Niblack
+/* https://blog.csdn.net/lx_Angel/article/details/109843948
+Niblack  There are many applications of the algorithm in the field of text image binarization , It is a classical local binarization method , The local binarization method is also of great significance , Including some later improvement methods ,Sauvola  Algorithm 、Nick  Algorithm , The core idea is ： According to the average gray level and standard deviation in the neighborhood of image pixels, a threshold surface is constructed for binarization .
+
+
+NiblackThreshold(InputArray src, OutputArray dst, double maxValue, ThresholdTypes type, int blockSize, double k, LocalBinarizationMethods binarizationMethod = LocalBinarizationMethods.Niblack, double r = 128);
+Parameters:
+        //src      8  Bit single channel image .
+        //dst:      And  src  Target images of the same size and type .
+        //maxValue    The non-zero value assigned to a pixel that satisfies the condition , And  THRESH_BINARY  and  THRESH_BINARY_INV  Use with threshold types .
+        //type    Threshold type , see  cv::ThresholdTypes.
+        //blockSize  The size of the pixel neighborhood used to calculate the pixel threshold ：3、5、7  etc. .
+        //k       Niblack  And heuristic technology using user adjustable parameters . about  Niblack, This is usually a question between  0  and  1  Between the value of the , Multiply by the standard deviation and subtract from the mean .
+        //LocalBinarizationMethods  The binarization method to use . By default , Use  Niblack  Technology . Other technologies can be specified , see also  cv::ximgproc::LocalBinarizationMethods.
+        //r    Sauvola  The technology uses user adjustable parameters . This is the dynamic range of the standard deviation .
+*/
+using System;
+using System.Diagnostics;
+using OpenCvSharp;
+using OpenCvSharp.XImgProc;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    internal class BinarizerSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var src = Cv2.ImRead(ImagePath.Binarization, ImreadModes.Grayscale);// Read binary graph 
+            using var niblack = new Mat();
+            using var sauvola = new Mat();
+            using var nick = new Mat();
+            int kernelSize = 51;
+
+
+            var sw = new Stopwatch();
+            sw.Start();
+            CvXImgProc.NiblackThreshold(src, niblack, 255, ThresholdTypes.Binary, kernelSize, -0.2, LocalBinarizationMethods.Niblack);
+            sw.Stop();
+            Console.WriteLine($"Niblack {sw.ElapsedMilliseconds} ms");
+
+
+            sw.Restart();
+            CvXImgProc.NiblackThreshold(src, sauvola, 255, ThresholdTypes.Binary, kernelSize, 0.1, LocalBinarizationMethods.Sauvola);
+            sw.Stop();
+            Console.WriteLine($"Sauvola {sw.ElapsedMilliseconds} ms");
+
+
+            sw.Restart();
+            CvXImgProc.NiblackThreshold(src, nick, 255, ThresholdTypes.Binary, kernelSize, -0.14, LocalBinarizationMethods.Nick);
+            sw.Stop();
+            Console.WriteLine($"Nick {sw.ElapsedMilliseconds} ms");
+
+
+            using (new Window("src", src, WindowFlags.AutoSize))
+            using (new Window("Niblack", niblack, WindowFlags.AutoSize))
+            using (new Window("Sauvola", sauvola, WindowFlags.AutoSize))
+            using (new Window("Nick", nick, WindowFlags.AutoSize))
+            {
+                Cv2.WaitKey();
+            }
+        }
+    }
+}
+
+
+
+
+#38.  Use  BRISK  Algorithm to retrieve key points .
+//https://www.cnblogs.com/welen/articles/6088639.html
+//BRISK The algorithm is 2011 year ICCV On 《BRISK:Binary Robust Invariant Scalable Keypoints》 In the article , Proposed a feature extraction algorithm , It is also a binary feature description operator .
+// It has good rotation invariance 、 Scale invariance , Good robustness, etc . In the application of image registration , Speed comparison ：SIFT<SURF<BRISK<FREAK<ORB, When registering images with large blur ,BRISK The algorithm performs best among them .
+//BRISK The algorithm mainly uses FAST9-16 Carry out feature point detection （ Why is the main ？ Because it is used once FAST5-8）, See the blog ：FAST Feature point detection algorithm . To solve the problem of scale invariance , It is necessary to detect feature points in the scale space , therefore BRISK In the algorithm, image pyramid is constructed for multi-scale representation .
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// Use  BRISK  Algorithm to retrieve key points .Retrieves keypoints using the BRISK algorithm.
+    /// </summary>
+    class BRISKSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            var gray = new Mat(ImagePath.Lenna, ImreadModes.Grayscale);// grayscale 
+            var dst = new Mat(ImagePath.Lenna, ImreadModes.Color);// Result chart 
+
+
+            using var brisk = BRISK.Create();
+            KeyPoint[] keypoints = brisk.Detect(gray);// Detect the key points of gray image 
+
+
+            if (keypoints != null)
+            {
+                var color = new Scalar(0, 255, 0);
+                foreach (KeyPoint kpt in keypoints)
+                {
+                    float r = kpt.Size / 2;
+                    Cv2.Circle(dst, (Point)kpt.Pt, (int)r, color);// Draw the dot  
+          // Draw a cross 
+                    Cv2.Line(dst,
+                        (Point)new Point2f(kpt.Pt.X + r, kpt.Pt.Y + r),
+                        (Point)new Point2f(kpt.Pt.X - r, kpt.Pt.Y - r),
+                        color);
+                    Cv2.Line(dst,
+                        (Point)new Point2f(kpt.Pt.X - r, kpt.Pt.Y + r),
+                        (Point)new Point2f(kpt.Pt.X + r, kpt.Pt.Y - r),
+                        color);
+                }
+            }
+
+
+            using (new Window("BRISK features", dst))
+            {
+                Cv2.WaitKey();
+            }
+        }
+    }
+}
+
+
+#39.googlenet  Deep learning model    Download model   
+using System;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Threading.Tasks;
+using OpenCvSharp;
+using OpenCvSharp.Dnn;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// https://docs.opencv.org/3.3.0/d5/de7/tutorial_dnn_googlenet.html
+    /// </summary>
+    class CaffeSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            const string protoTxt = @"Data\Text\bvlc_googlenet.prototxt";// The configuration file 
+            const string caffeModel = "bvlc_googlenet.caffemodel";// Weight file 
+            const string synsetWords = @"Data\Text\synset_words.txt";// Categorical words 
+            var classNames = File.ReadAllLines(synsetWords)
+                .Select(line => line.Split(' ').Last())
+                .ToArray();// Read all categories 
+
+
+            Console.Write("Downloading Caffe Model...");
+            PrepareModel(caffeModel);
+            Console.WriteLine(" Done");
+
+
+            using var net = CvDnn.ReadNetFromCaffe(protoTxt, caffeModel);// Load network model 
+            using var img = new Mat(@"Data\Image\space_shuttle.jpg");// Image to be inferred 
+            Console.WriteLine("Layer names: {0}", string.Join(", ", net.GetLayerNames()));//
+            Console.WriteLine();
+
+
+            // Preprocess the image , Including the minus mean , Scaling , tailoring , Switching channel, etc , Return to one 4 The tunnel blob(blob It can be simply understood as a N An array of dimensions , Input for neural networks )  Convert Mat to batch of images
+            using var inputBlob = CvDnn.BlobFromImage(img, 1, new Size(224, 224), new Scalar(104, 117, 123));
+            net.SetInput(inputBlob, "data");// Set model input 
+            using var prob = net.Forward("prob");// Feedforward calculation  
+            //  Find the best match class  find the best class
+            GetMaxClass(prob, out int classId, out double classProb);
+            Console.WriteLine("Best class: #{0} '{1}'", classId, classNames[classId]);
+            Console.WriteLine("Probability: {0:P2}", classProb);
+
+
+            Console.WriteLine("Press any key to exit");
+            Console.Read();
+        }
+    // Download as byte array 
+        private static byte[] DownloadBytes(string url)
+        {
+            var client = WebRequest.CreateHttp(url);
+            using var response = client.GetResponseAsync().GetAwaiter().GetResult();
+            using var responseStream = response.GetResponseStream();
+            using var memory = new MemoryStream();
+            responseStream.CopyTo(memory);
+            return memory.ToArray();
+        }
+    // Download model 
+        private static void PrepareModel(string fileName)
+        {
+            if (!File.Exists(fileName))// file does not exist 
+            {
+                var contents = DownloadBytes("http://dl.caffe.berkeleyvision.org/bvlc_googlenet.caffemodel");// Download model 
+                File.WriteAllBytes(fileName, contents);// write file 
+            }
+        }
+
+
+        /// <summary>
+        /// Find best class for the blob (i. e. class with maximal probability)
+    ///  by  blob  Find the best category （ That is, the category with the maximum probability ）
+        /// </summary>
+        /// <param name="probBlob"></param>
+        /// <param name="classId"></param>
+        /// <param name="classProb"></param>
+        private static void GetMaxClass(Mat probBlob, out int classId, out double classProb)
+        {
+            // take  blob  Remodel as  1x1000  matrix  reshape the blob to 1x1000 matrix
+            using var probMat = probBlob.Reshape(1, 1); // Switch to single channel 1 That's ok N Column Mat Row vector   https://blog.csdn.net/qq_33515808/article/details/89313885
+            Cv2.MinMaxLoc(probMat, out _, out classProb, out _, out var classNumber);// Maximum probability class , Class number 
+            classId = classNumber.X;// Class index 
+        }
+    }
+}
+
+
+#40.   Turn on the camera  
+//https://blog.csdn.net/Maybe_ch/article/details/121142817
+using System;
+using System.Threading.Tasks;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    class CameraCaptureSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var capture = new VideoCapture(0, VideoCaptureAPIs.DSHOW);// Turn on camera 
+            if (!capture.IsOpened())
+                return;
+
+
+            capture.FrameWidth = 1920; // Set the frame payment 
+            capture.FrameHeight = 1280;// Set the frame height 
+            capture.AutoFocus = true;// Set auto focus 
+
+
+            const int sleepTime = 10;// The duration of the 
+
+
+            using var window = new Window("capture");
+            var image = new Mat();
+            
+            while (true)
+            {
+                capture.Read(image);// Read a frame  
+                if (image.Empty())
+                    break;
+
+
+                window.ShowImage(image);// Show  
+                int c = Cv2.WaitKey(sleepTime);// Keep waiting for the key 10ms
+                if (c >= 0)
+                {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+
+#41.  Histogram equalization ： Generally, it can be used to improve the brightness of pictures 
+// cv2.equalizeHist ( Histogram equalization ) 
+// cv2.createCLAHA ( Used to generate adaptive equalization images )
+//http://edu.pointborn.com/article/2021/5/18/1386.html 
+//https://www.cnblogs.com/my-love-is-python/p/10405811.html
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    class ClaheSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var src = new Mat(ImagePath.TsukubaLeft, ImreadModes.Grayscale);// grayscale  
+            using var dst1 = new Mat();
+            using var dst2 = new Mat();
+            using var dst3 = new Mat();
+
+
+            using (var clahe = Cv2.CreateCLAHE())// Instantiate the equalization histogram function 
+            {
+                clahe.ClipLimit = 20;
+                clahe.Apply(src, dst1);// Use  .apply  Perform the equalization operation 
+                clahe.ClipLimit = 40;//clipLimit  Threshold of color contrast 
+                clahe.Apply(src, dst2);
+                clahe.TilesGridSize = new Size(4, 4);//titleGridSize  Grid size for pixel equalization , That is, how many grids are used for histogram equalization 
+                clahe.Apply(src, dst3);
+            }
+      // Batch display images 
+            Window.ShowImages(
+                new[]{src, dst1, dst2, dst3}, 
+                new[]{"src", "dst clip20", "dst clip40", "dst tile4x4"});
+        }
+    }
+}
+
+
+
+
+#42.   Connected domain marker image ConnectedComponents
+//https://blog.csdn.net/jgj123321/article/details/93489417
+//https://shimat.github.io/opencvsharp_docs/html/2905013f-9f1a-6179-77a8-4488551c3619.htm
+// Calculate images marked as Boolean images for connected components . have  4  Road or  8  Image of road connection  -  return  N, That is, the total number of labels  [0, N-1], among  0  Indicates the background label .ltype Specify the output label image type , This is an important consideration based on the total number of tags or the total number of pixels in the source image .
+using System.Linq;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    class ConnectedComponentsSample : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var src = new Mat(ImagePath.Shapes, ImreadModes.Color);// The source image 
+            using var gray = src.CvtColor(ColorConversionCodes.BGR2GRAY);// grayscale 
+            using var binary = gray.Threshold(0, 255, ThresholdTypes.Otsu | ThresholdTypes.Binary);// Binary figure 
+            using var labelView = src.EmptyClone();// Make the same size as this image 、 Depth and channel  Mat
+            using var rectView = binary.CvtColor(ColorConversionCodes.GRAY2BGR);
+      //ConnectedComponents ConnectedComponentsEx(InputArray image, PixelConnectivity connectivity = PixelConnectivity.Connectivity8, ConnectedComponentsAlgorithmsTypes ccltype = ConnectedComponentsAlgorithmsTypes.Default);
+      // Calculate the image of the connection component marked as a Boolean image . have  4  or  8  Image of road connection  -  return  N, Total number of tags  [0, N-1]  among  0  Indicates the background label .ltype  Specify the output label image type , This is an important consideration based on the total number of tags or the total number of pixels in the source image .
+      //image :   Pictures to be marked 
+      //connectivity:  8  or  4  for  8  Road or  4  Road connection 
+            var cc = Cv2.ConnectedComponentsEx(binary);// amount to halcon Of connection Get all connected domains 
+            if (cc.LabelCount <= 1)
+                return;
+
+
+            // Draw labels   draw labels
+            cc.RenderBlobs(labelView);
+
+
+            // Draw a bounding box other than the background  draw bonding boxes except background
+            foreach (var blob in cc.Blobs.Skip(1))
+            {
+                rectView.Rectangle(blob.Rect, Scalar.Red);
+            }
+
+
+            // Filter the maximum spots  filter maximum blob
+            var maxBlob = cc.GetLargestBlob();
+            var filtered = new Mat();
+            cc.FilterByBlob(src, filtered, maxBlob);
+
+
+            using (new Window("src", src))
+            using (new Window("binary", binary))
+            using (new Window("labels", labelView))
+            using (new Window("bonding boxes", rectView))
+            using (new Window("maximum blob", filtered))
+            {
+                Cv2.WaitKey();
+            }
+        }
+    }
+}
+
+
+#43.  DFT   The fast Fourier transform 
+//http://www.leheavengame.com/article/62a0b30c9ce7955627624f46
+using System;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// DFT, inverse DFT
+    /// http://stackoverflow.com/questions/19761526/how-to-do-inverse-dft-in-opencv
+    /// </summary>
+    class DFT : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var img = Cv2.ImRead(ImagePath.Lenna, ImreadModes.Grayscale);// The source image  
+
+
+            // Expand the input image to the best size  expand input image to optimal size
+            using var padded = new Mat(); 
+            int m = Cv2.GetOptimalDFTSize(img.Rows);
+            int n = Cv2.GetOptimalDFTSize(img.Cols); // on the border add zero values
+            Cv2.CopyMakeBorder(img, padded, 0, m - img.Rows, 0, n - img.Cols, BorderTypes.Constant, Scalar.All(0));
+            
+            // Add zero to another plane of the extension   Add to the expanded another plane with zeros
+            using var paddedF32 = new Mat();
+            padded.ConvertTo(paddedF32, MatType.CV_32F);
+            Mat[] planes = { paddedF32, Mat.Zeros(padded.Size(), MatType.CV_32F) };
+            using var complex = new Mat();// Composite plane 
+            Cv2.Merge(planes, complex);     // Left primitive space field , Right extended plane frequency domain     
+
+
+            //  such , The result may be suitable for the source matrix this way the result may fit in the source matrix
+            using var dft = new Mat();
+            Cv2.Dft(complex, dft);            
+
+
+            //  Calculate the amplitude and switch to logarithmic scale  compute the magnitude and switch to logarithmic scale
+            // => log(1 + sqrt(Re(DFT(I))^2 + Im(DFT(I))^2))
+            Cv2.Split(dft, out var dftPlanes);  // planes[0] = Re(DFT(I), planes[1] = Im(DFT(I))
+
+
+            // planes[0] = magnitude
+      /*
+       Calculate the amplitude of two-dimensional vector 
+      void magnitude(InputArray x,InputArray y,OutputArray magnitude)
+       The first parameter ：InputArray Type of x, Represents the floating point type of the vector X Coordinate value , That is, the real part 
+       The second parameter ：InputArray Type of y, Represents the floating point type of the vector Y Coordinate value , That is, the imaginary part 
+       The third parameter ：OutputArray Type of magnitude, The amplitude of the output , It and the first parameter X Of the same size and type 
+      */
+            using var magnitude = new Mat();
+            Cv2.Magnitude(dftPlanes[0], dftPlanes[1], magnitude);
+
+
+            using Mat magnitude1 = magnitude + Scalar.All(1);  //  Switch to logarithmic scale  switch to logarithmic scale
+            Cv2.Log(magnitude1, magnitude1); // Calculate the natural logarithm of the absolute value of each array element 
+
+
+            // Cut the spectrum , If it has odd rows or columns  crop the spectrum, if it has an odd number of rows or columns
+            using var spectrum = magnitude1[
+                new Rect(0, 0, magnitude1.Cols & -2, magnitude1.Rows & -2)];
+
+
+            // rearrange the quadrants of Fourier image  so that the origin is at the image center
+      // Rearrange the quadrants of the Fourier image , Place the origin at the center of the image 
+            int cx = spectrum.Cols / 2;
+            int cy = spectrum.Rows / 2;
+
+
+            using var q0 = new Mat(spectrum, new Rect(0, 0, cx, cy));   // Top-Left - Create a ROI per quadrant
+            using var q1 = new Mat(spectrum, new Rect(cx, 0, cx, cy));  // Top-Right
+            using var q2 = new Mat(spectrum, new Rect(0, cy, cx, cy));  // Bottom-Left
+            using var q3 = new Mat(spectrum, new Rect(cx, cy, cx, cy)); // Bottom-Right
+
+
+            //  Exchange quadrant （ Top left and bottom right ） swap quadrants (Top-Left with Bottom-Right)
+            using var tmp = new Mat();                           
+            q0.CopyTo(tmp);
+            q3.CopyTo(q0);
+            tmp.CopyTo(q3);
+
+
+            //  Exchange quadrant （ Top right and bottom left ） swap quadrant (Top-Right with Bottom-Left)
+            q1.CopyTo(tmp);                    
+            q2.CopyTo(q1);
+            tmp.CopyTo(q2);
+
+
+            // Convert a matrix with floating-point values to   Transform the matrix with float values into a
+            Cv2.Normalize(spectrum, spectrum, 0, 255, NormTypes.MinMax); // Adjust the range of the picture value  
+            spectrum.ConvertTo(spectrum, MatType.CV_8U);// Conversion type 
+                                     
+            //  Display result diagram Show the result
+            Cv2.ImShow("Input Image"       , img);
+            Cv2.ImShow("Spectrum Magnitude", spectrum);
+
+
+            // Calculate the inverse transform of discrete Fourier transform   calculating the idft
+            using var inverseTransform = new Mat();
+            Cv2.Dft(dft, inverseTransform, DftFlags.Inverse | DftFlags.RealOutput);// inverse transformation 
+            Cv2.Normalize(inverseTransform, inverseTransform, 0, 255, NormTypes.MinMax);// Value range adjustment 
+            inverseTransform.ConvertTo(inverseTransform, MatType.CV_8U);// Type conversion 
+
+
+            Cv2.ImShow("Reconstructed by Inverse DFT", inverseTransform);// Display the result of inverse transformation 
+            Cv2.WaitKey();
+            Cv2.DestroyAllWindows();
+        }
+    }
+}
+
+
+#44.  FSRCNN Super resolution network   Super-resolution  DNN Model generation   Super resolution image   On the sampling     It can be used for super-resolution video generation 
+//https://blog.csdn.net/qq_45122568/article/details/124002837
+//https://blog.csdn.net/qq_45122568/category_11691350.html
+//https://zhuanlan.zhihu.com/p/337190517
+//FSRCNN The speed ratio of the model SRCNN Improved 40 More than times , And the image restoration quality is higher .
+// The class of image is upgraded by convolution neural network . The following four models are implemented ：
+//edsr
+//espcn
+//fsrcnn
+//lapsrn
+using OpenCvSharp;
+using OpenCvSharp.DnnSuperres;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    class DnnSuperresSample : ConsoleTestBase
+    {
+        // https://github.com/Saafke/FSRCNN_Tensorflow/tree/master/models
+        private const string ModelFileName = "Data/Model/FSRCNN_x4.pb";
+
+
+        public override void RunTest()
+        {
+            using var dnn = new DnnSuperResImpl("fsrcnn", 4);//scale=4   An integer that specifies the magnification factor 
+            dnn.ReadModel(ModelFileName);// Read the model 
+
+
+            using var src = new Mat(ImagePath.Mandrill, ImreadModes.Color);// The source image 
+            using var dst = new Mat();//
+            dnn.Upsample(src, dst);// Up sampling via neural network 
+
+
+            Window.ShowImages(
+                new[]{src, dst}, 
+                new[]{"src", "dst0"});
+        }
+    }
+}
+
+
+#45.  Draw the best match point of the image pair  
+//https://zhuanlan.zhihu.com/p/91479558
+//ORB（Oriented FAST and Rotated BRIEF） yes Oriented FAST + Rotated BRIEF Abbreviation （ I think it should be called OFRB）. It is the fastest and most stable feature point detection and extraction algorithm at present , Many image mosaic and target tracking techniques utilize ORB Feature implementation .
+using System.Linq;
+using OpenCvSharp;
+using SampleBase;
+
+
+namespace SamplesCore
+{
+    /// <summary>
+    /// https://stackoverflow.com/questions/51606215/how-to-draw-bounding-box-on-best-matches/51607041#51607041
+    /// </summary>
+    class DrawBestMatchRectangle : ConsoleTestBase
+    {
+        public override void RunTest()
+        {
+            using var img1 = new Mat(ImagePath.Match1, ImreadModes.Color);// Images 1： Object graph to search 
+            using var img2 = new Mat(ImagePath.Match2, ImreadModes.Color);// Images 2   Scene 
+
+
+            using var orb = ORB.Create(1000);
+            using var descriptors1 = new Mat();
+            using var descriptors2 = new Mat();
+      //ORB = Oriented FAST（ Characteristic point ） + Rotated BRIEF（ Feature description ）
+            orb.DetectAndCompute(img1, null, out var keyPoints1, descriptors1);//ORB Key point detection   Generating descriptors 
+            orb.DetectAndCompute(img2, null, out var keyPoints2, descriptors2);
+
+
+            using var bf = new BFMatcher(NormTypes.Hamming, crossCheck: true);// Violence matcher 
+            var matches = bf.Match(descriptors1, descriptors2);
+
+
+            var goodMatches = matches
+                .OrderBy(x => x.Distance)
+                .Take(10)
+                .ToArray();//
+
+
+            var srcPts = goodMatches.Select(m => keyPoints1[m.QueryIdx].Pt).Select(p => new Point2d(p.X, p.Y)); // Point on the source image 
+            var dstPts = goodMatches.Select(m => keyPoints2[m.TrainIdx].Pt).Select(p => new Point2d(p.X, p.Y));// Points on the target image 
+      // Calculate the optimal single mapping transformation matrix between multiple two-dimensional point pairs  H（3 That's ok x3 Column ） , Use the least mean square error or RANSAC Method 
+            using var homography = Cv2.FindHomography(srcPts, dstPts, HomographyMethods.Ransac, 5, null);//  Find the transformation matrix between two planes .
+
+
+            int h = img1.Height, w = img1.Width;
+            var img2Bounds = new[]
+            {
+                new Point2d(0, 0), 
+                new Point2d(0, h-1),
+                new Point2d(w-1, h-1), 
+                new Point2d(w-1, 0),
+            };
+            var img2BoundsTransformed = Cv2.PerspectiveTransform(img2Bounds, homography); // Calculate the mapping points of image corners 
+
+
+            using var view = img2.Clone();
+            var drawingPoints = img2BoundsTransformed.Select(p => (Point) p).ToArray();//
+            Cv2.Polylines(view, new []{drawingPoints}, true, Scalar.Red, 3);// The plot 2 Object boundary quadrilateral 
+
+
+            using (new Window("view", view))
+            {
+                Cv2.WaitKey();
+            }
+        }
+    }
+}
